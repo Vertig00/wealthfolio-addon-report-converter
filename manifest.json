@@ -1,0 +1,38 @@
+{
+  "id": "wealthfolio-addon-report-converter",
+  "name": "wealthfolio-addon-report-converter",
+  "version": "1.0.0",
+  "description": "A wealthfolio addon that convert broker reports to wealthfolio",
+  "author": "Vertig0",
+  "main": "dist/addon.js",
+  "sdkVersion": "3.9.0",
+  "minWealthfolioVersion": "3.9.0",
+  "enabled": true,
+  "contributes": {
+    "routes": [{ "id": "wealthfolio-addon-report-converter" }],
+    "links": {
+      "sidebar": [
+        {
+          "id": "wealthfolio-addon-report-converter",
+          "route": "wealthfolio-addon-report-converter",
+          "label": "wealthfolio-addon-report-converter",
+          "icon": "squares-four",
+          "order": 100
+        }
+      ]
+    }
+  },
+  "hostDependencies": {
+    "@tanstack/react-query": "^5.90.0",
+    "@wealthfolio/addon-sdk": "^3.9.0",
+    "@wealthfolio/ui": "^3.9.0",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^0.561.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "recharts": "^3.7.0"
+  },
+  "permissions": [],
+  "keywords": ["wealthfolio", "addon"],
+  "license": "MIT"
+}
