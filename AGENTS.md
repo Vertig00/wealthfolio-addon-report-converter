@@ -1,0 +1,123 @@
+# AGENTS.md — Wealthfolio Statement Importer
+
+## Project goal
+
+Build a Wealthfolio Desktop addon that converts broker statements in CSV/XLSX format into a format supported by Wealthfolio.
+
+The user should be able to:
+1. Upload a CSV or XLSX file.
+2. Select the report source — XTB first.
+3. Review parsed transactions, warnings, and errors in a graphical user interface (GUI).
+4. Download an output file confirmed to be compatible with Wealthfolio.
+5. In a later phase, initiate an import directly into a selected Wealthfolio account.
+
+The architecture must support additional future providers, such as mBank, without rewriting the whole addon.
+
+## Agent working rules
+
+- Read this file, `README.md`, and all relevant files in `docs/` before changing code.
+- Inspect the existing project structure, `package.json`, build configuration, manifest, and the actually installed Wealthfolio SDK version first.
+- Preserve conventions from the official Wealthfolio addon scaffold. Do not replace the build setup or manifest without a clear reason.
+- Never invent SDK method names, import schemas, or CSV fields. Verify them against installed types, examples, and current documentation.
+- Separate file reading, provider-specific parsing, normalized data, validation, export, and Wealthfolio integration.
+- Support CSV and XLSX. Do not assume all CSV files use commas, UTF-8, or a header row at line one.
+- Do not assume all XTB reports have identical layouts. Detect known variants and report ambiguity instead of silently guessing.
+- Do not write transactions to Wealthfolio without an explicit user action. Show a review/confirmation step first.
+- Never send broker statements or financial data to external services. Process files locally unless the project owner explicitly approves a different design.
+- Do not log report contents, personal information, account identifiers, balances, or full transactions. Logs should contain only technical details needed for debugging.
+- Never commit real user statements to Git, tests, screenshots, prompts, or documentation.
+- Before adding fixtures to Git, verify that they are synthetic or carefully anonymized.
+- Run available tests, type checks, lint, and build commands after changes. If a command does not exist, report that instead of inventing it.
+- Make small, focused changes. Do not delete files or change dependencies without a clear reason.
+- At the end of each task, report changed files, decisions, test results, limitations, and the next recommended step.
+
+## Product priorities
+
+### Version 1 — XTB parsing and downloadable export
+- CSV/XLSX upload.
+- Source selector, initially supporting XTB.
+- A clear GUI for file selection, source selection, preview, validation, and export.
+- Sheet selection when an XLSX has multiple worksheets.
+- Parse supported XTB report variants into a broker-independent internal data model.
+- Validation and row-specific errors/warnings.
+- Download an output file in a format verified to be compatible with Wealthfolio.
+- Do not write to a Wealthfolio account in this first phase unless explicitly scoped and verified.
+
+### Version 1.x — direct import
+- Select a Wealthfolio account.
+- Validate using the official API, if supported.
+- Handle duplicates and partial failures.
+- Require explicit user confirmation before writing.
+- Show an import summary.
+
+### Future providers and features
+- Add mBank and other providers as separate source adapters.
+- Reuse the common data model, validation, and Wealthfolio exporter/importer.
+- Do not put provider-specific parsing logic in UI components.
+
+## GUI requirements
+
+The addon is a user-facing product, not just a parser library. Build a clear, accessible GUI consistent with the host app and the official addon SDK.
+
+The primary workflow should be easy to understand:
+1. Choose report source.
+2. Upload CSV/XLSX.
+3. Select worksheet if needed.
+4. Review parsed data and diagnostics.
+5. Download the converted file, or later continue to direct import.
+
+Include:
+- clear labels, instructions, empty states, loading states, and error states;
+- an understandable transaction preview table;
+- row-level validation messages and a summary of valid, warning, and invalid records;
+- accessible keyboard navigation and visible focus states;
+- responsive layout suitable for the host application window;
+- confirmation before irreversible or account-changing actions;
+- no success messages until the operation actually succeeds.
+
+Do not hard-code user-facing strings in components. Use the localization system described below.
+
+## Localization / internationalization (i18n)
+
+The GUI must support **Polish (`pl`) and English (`en`) in the first release**, and be designed to add more languages later.
+
+- Use a consistent i18n approach compatible with the existing scaffold. Inspect dependencies and project conventions before choosing or adding a library.
+- Keep translations in separate locale files, e.g. `src/locales/en.json` and `src/locales/pl.json`, or an equivalent structure appropriate to the project.
+- All user-facing text must use translation keys: navigation, headings, buttons, labels, hints, empty states, validation messages, errors, dialogs, import summaries, and accessibility labels.
+- Avoid embedding English or Polish copy directly in UI components.
+- Use English as the fallback locale if a translation key is missing.
+- Provide a language selector in the addon's GUI unless the host app exposes a reliable locale that can be used consistently. If the host locale is used, document the behavior and provide an override if feasible.
+- Store language preference only if there is an appropriate existing persistence mechanism; do not introduce unnecessary storage.
+- Use locale-aware date, number, and currency formatting. Do not use localized display strings as internal values.
+- Keep translation keys stable and descriptive. Document how to add a new locale.
+- Ensure the layout handles longer translated strings without clipping.
+- Add tests that check locale loading, fallback behavior, and key coverage for Polish and English.
+
+## Required data flow
+
+`CSV/XLSX → file reader → provider adapter (XTB) → canonical model → validation → GUI review → Wealthfolio exporter or, later, official import API`
+
+Do not connect the XTB parser directly to UI components or persistence methods.
+
+## Before implementing direct import
+
+1. Verify the current official SDK/API capabilities and limitations.
+2. Confirm the required import data shape using installed types and current documentation.
+3. Document how each supported XTB operation maps to Wealthfolio.
+4. Add tests using synthetic data.
+5. Handle duplicates and ambiguous records.
+6. Only then expose account-writing functionality with explicit confirmation.
+
+## Project documentation
+
+- `docs/PRODUCT_SPEC.md` — product scope and requirements.
+- `docs/ARCHITECTURE.md` — module boundaries and data flow.
+- `docs/I18N.md` — language support and translation rules.
+- `docs/XTB_SAMPLE_DATA.md` — safe process for analyzing a real XTB report.
+- `docs/IMPLEMENTATION_PLAN.md` — stages and completion criteria.
+- `local-samples/README.md` — location for local, uncommitted broker reports.
+- `tests/fixtures/README.md` — rules for test fixtures.
+
+## Definition of done
+
+A task is not complete merely because the code looks plausible. Relevant tests and available quality checks must pass. Do not claim Wealthfolio compatibility until the output format has been verified against current documentation/SDK and tested.

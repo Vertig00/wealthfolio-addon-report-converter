@@ -1,0 +1,16 @@
+# Private broker statements — never commit
+/local-samples/**
+!/local-samples/README.md
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.zip
+
+# Environment variables (if any)
+.env
+
+# TypeScript temporary files
+*.tsbuildinfo

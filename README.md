@@ -1,35 +1,20 @@
-# wealthfolio-addon-report-converter
+# Wealthfolio Statement Importer — Agent Documentation
 
-A wealthfolio addon that convert broker reports to wealthfolio
+This package contains project guidance for an AI coding agent working on a Wealthfolio addon. It is a documentation starter pack, not a complete addon implementation.
 
-## Development
+## How to use
 
-```bash
-# Install dependencies
-npm install
+1. Generate the addon project using the official Wealthfolio addon tooling, if you have not already done so.
+2. Copy `AGENTS.md` into the project root.
+3. Copy `docs/`, `local-samples/README.md`, and `tests/fixtures/README.md` into the project.
+4. Merge the rules from `docs/GITIGNORE_SNIPPET.md` into the existing `.gitignore`. Do not blindly overwrite project configuration.
+5. Open the project in WSL and start OpenCode from the project root.
+6. Ask the agent to inspect the existing project and propose a plan before implementing the importer.
 
-# Start development server
-npm run dev:server
+## Suggested first prompt for OpenCode
 
-# Build for production
-npm run build
+> Read `AGENTS.md` and every document in `docs/`. Inspect the existing project, installed Wealthfolio SDK version, and available package scripts. Do not implement features yet. Report the project status, propose a staged plan, and list questions that can only be answered after inspecting an XTB report. Do not send local sample files to external services.
 
-# Package addon
-npm run bundle
-```
+## Privacy
 
-Wealthfolio 3.7 indexes private files below `assets/` and `dist/assets/` automatically. Use
-`ctx.assets.getBlob(path)` or `ctx.assets.getUrl(path)` to load them in the sandbox; no manifest
-asset list or permission is required. Blob URLs are valid only for the current addon lifetime.
-
-The generated Vite config targets Chrome/Edge 107, Firefox 104, and Safari 16, matching Wealthfolio
-3.7. The sandbox supports packaged images, fonts, media, CSS, and WebAssembly. Worker/service-worker
-entry points, popups, direct network requests, and remote CSS imports are intentionally unavailable.
-
-## Features
-
-- Add your features here
-
-## License
-
-MIT
+Broker statements may contain sensitive financial and identifying data. Keep real files local and outside Git. Only commit synthetic or carefully anonymized samples.
