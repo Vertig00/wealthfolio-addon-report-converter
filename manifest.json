@@ -15,7 +15,7 @@
         {
           "id": "wealthfolio-addon-report-converter",
           "route": "wealthfolio-addon-report-converter",
-          "label": "wealthfolio-addon-report-converter",
+          "label": "Report Converter",
           "icon": "squares-four",
           "order": 100
         }
@@ -32,7 +32,28 @@
     "react-dom": "^19.2.0",
     "recharts": "^3.7.0"
   },
-  "permissions": [],
+  "permissions": [
+    {
+      "category": "files",
+      "functions": ["openCsvDialog", "openSaveDialog"],
+      "purpose": "Import CSV files and export data to files"
+    },
+    {
+      "category": "events",
+      "functions": ["onDrop", "onUpdateComplete", "onSyncComplete"],
+      "purpose": "Listen for application events"
+    },
+    {
+      "category": "accounts",
+      "functions": ["getAll"],
+      "purpose": "Read accounts for data import"
+    },
+    {
+      "category": "activities",
+      "functions": ["getAll", "import"],
+      "purpose": "Read and import transaction activities"
+    }
+  ],
   "keywords": ["wealthfolio", "addon"],
   "license": "MIT"
 }

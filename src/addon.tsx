@@ -1,11 +1,9 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { AddonContext, AddonEnableFunction } from '@wealthfolio/addon-sdk';
 import { Card, CardContent } from '@wealthfolio/ui';
+import { ConverterPage } from './pages';
+import { t } from './lib/i18n';
 
-// The host owns a single React root per addon and mounts the route `component`
-// itself (`createElement(Component, { location })`) with no access to the addon
-// context. Capture it at enable time so the route wrapper can hand it down.
-// (Do NOT call createRoot yourself — the host manages the lifecycle.)
 let addonCtx: AddonContext | undefined;
 
 function AddonExample({ ctx }: { ctx: AddonContext }) {
@@ -13,10 +11,8 @@ function AddonExample({ ctx }: { ctx: AddonContext }) {
     <div className="p-6">
       <Card>
         <CardContent className="p-6">
-          <h1 className="text-2xl font-semibold mb-2">wealthfolio-addon-report-converter</h1>
-          <p className="text-muted-foreground">
-            Welcome to your new Wealthfolio addon! Start building amazing features.
-          </p>
+          <h1 className="text-2xl font-semibold mb-2">{t('app.title')}</h1>
+          <p className="text-muted-foreground">{t('upload.description')}</p>
         </CardContent>
       </Card>
     </div>
@@ -28,11 +24,13 @@ function AddonExample({ ctx }: { ctx: AddonContext }) {
 // without booting the addon; this component only runs when the route is first
 // visited. The QueryClientProvider reuses this addon's isolated cache across
 // route navigations; invalidations/refetches are bridged to the host.
-const AddonRoute = () => (
-  <QueryClientProvider client={addonCtx!.api.query.getClient() as QueryClient}>
-    <AddonExample ctx={addonCtx!} />
-  </QueryClientProvider>
-);
+const AddonRoute = () => {
+  return (
+    <QueryClientProvider client={addonCtx!.api.query.getClient() as any}>
+      <ConverterPage t={t} files={addonCtx!.api.files} />
+    </QueryClientProvider>
+  );
+};
 
 const enable: AddonEnableFunction = (ctx) => {
   addonCtx = ctx;
