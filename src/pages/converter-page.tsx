@@ -17,6 +17,7 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
   const [isLoading, setIsLoading] = useState(false);
   const [validation, setValidation] = useState<{ valid: number; warning: number; error: number }>({ valid: 0, warning: 0, error: 0 });
   const [rows, setRows] = useState<any[]>([]);
+  const [wealthfolioCsv, setWealthfolioCsv] = useState<string>('');
   const [headers, setHeaders] = useState<string[]>([]);
   const [selectedSheet, setSelectedSheet] = useState<string>('');
 
@@ -42,6 +43,7 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
       setValidation({ valid: 0, warning: 0, error: 0 });
       setRows([]);
       setHeaders([]);
+      setWealthfolioCsv('');
 
       const name = file.name.toLowerCase();
       try {
@@ -77,6 +79,7 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
                 : [];
               setHeaders(['type', 'instrument', 'ticker', 'category', 'time', 'amount', 'id', 'comment', 'product', 'positionId']);
               setRows(transactionRows);
+              setWealthfolioCsv(xtbResult.wealthfolioCsv || '');
             }
           } else {
             const xlsxResult = await readXLSXFile(file);
@@ -129,12 +132,12 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
   };
 
   const handleDownload = async () => {
-    if (rows.length === 0) {
+    if (rows.length === 0 && !wealthfolioCsv) {
       alert(t('error.emptyFile'));
       return;
     }
     try {
-      const csvContent = rows.map((row: any) => Object.values(row).map(v => String(v ?? '').includes(',') ? `"${String(v ?? '')}"` : String(v ?? '')).join(',')).join('\n');
+      const csvContent = wealthfolioCsv || rows.map((row: any) => Object.values(row).map(v => String(v ?? '').includes(',') ? `"${String(v ?? '')}"` : String(v ?? '')).join(',')).join('\n');
       await files.openSaveDialog(csvContent, source + '_wealthfolio.csv');
     } catch (e) {
       alert(t('export.error') + ': ' + (e instanceof Error ? e.message : String(e)));

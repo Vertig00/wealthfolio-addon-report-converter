@@ -121,3 +121,59 @@ Do not connect the XTB parser directly to UI components or persistence methods.
 ## Definition of done
 
 A task is not complete merely because the code looks plausible. Relevant tests and available quality checks must pass. Do not claim Wealthfolio compatibility until the output format has been verified against current documentation/SDK and tested.
+
+## Persistent Project Context and Session Continuity
+
+The project documentation is the persistent source of truth across agent sessions. Do not rely on conversation history alone.
+
+### Required context files
+
+Maintain these files:
+
+- `docs/PROJECT_CONTEXT.md` — current project facts, verified findings, constraints, open questions, and important discoveries.
+- `docs/DECISIONS.md` — significant technical and product decisions, including rationale and consequences.
+- `docs/NEXT_SESSION.md` — current progress, unfinished work, blockers, and the next recommended actions.
+
+Create these files if they do not exist.
+
+### At the start of each session
+
+1. Read `AGENTS.md`.
+2. Read the relevant project documentation, including all three context files above.
+3. Inspect the current Git state and relevant source files before assuming previous work is still present.
+4. Verify important facts against the actual code, installed dependencies, SDK types, and available documentation.
+5. Identify inconsistencies between documentation and the current implementation.
+
+### During work
+
+Update persistent context when discovering information that will be useful in future sessions, including:
+
+- verified XTB or other broker report formats;
+- mappings from broker columns to the canonical transaction model;
+- date, number, currency, fee, tax, and transaction-type parsing rules;
+- Wealthfolio SDK capabilities and verified integration constraints;
+- architectural decisions and their rationale;
+- recurring bugs, edge cases, and successful solutions;
+- testing requirements and known limitations.
+
+Distinguish verified facts from assumptions and unresolved questions. Record evidence or the relevant file path when useful.
+
+Do not save every conversational detail. Save concise, durable, project-relevant information.
+
+### Before ending a session
+
+1. Update `docs/PROJECT_CONTEXT.md` if important facts changed.
+2. Add significant decisions to `docs/DECISIONS.md`.
+3. Update `docs/NEXT_SESSION.md` with completed work, current status, blockers, and the next concrete steps.
+4. Ensure documentation matches the actual code.
+5. Summarize the changes and identify anything that still requires user input.
+
+### Safety and correctness
+
+- Never record passwords, API keys, access tokens, or other secrets in project context.
+- Never copy private financial report data or personally identifying information into general documentation.
+- Use synthetic or anonymized examples when documenting broker formats.
+- Do not claim that a fact is verified unless it has been checked.
+- Do not overwrite user decisions or delete historical decisions without a clear reason.
+- Keep context concise, structured, and useful for future sessions.
+- Do not claim that changes were saved unless the files were actually written successfully.
