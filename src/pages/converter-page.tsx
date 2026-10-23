@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { readXLSXFile, readCSVFile } from '../lib/file-readers';
-import { parseXTBReport } from '../lib/sources/xtb';
+import { parseXTBReport, buildWealthfolioCsv } from '../lib/sources/xtb';
 import {
   Page,
   PageHeader,
@@ -33,7 +33,7 @@ function formatDate(d: any): string {
   return String(d);
 }
 
-export function ConverterPage({ t, files }: { t: (key: string) => string; files: any }) {
+export function ConverterPage({ t, files, storage }: { t: (key: string) => string; files: any; storage: any }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [source, setSource] = useState<'XTB' | 'mBank'>('XTB');
@@ -63,9 +63,25 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
     setValidation({ valid: 0, warning: 0, error: 0 });
   };
 
-  const handleFile = (selected: File) => {
+  const handleFile = async (selected: File) => {
     setFile(selected);
     resetResults();
+    const name = selected.name.toLowerCase();
+    if (name.endsWith('.xlsx')) {
+      try {
+        const xlsxResult = await readXLSXFile(selected);
+        const cashSheet = xlsxResult.sheets.find((sh: any) => sh.name === 'Cash Operations');
+        if (cashSheet && cashSheet.rows.length >= 4) {
+          const fromSerial = Number(cashSheet.rows[2][1]);
+          const toSerial = Number(cashSheet.rows[3][1]);
+          if (Number.isFinite(fromSerial) && Number.isFinite(toSerial)) {
+            setMode(toSerial - fromSerial >= 180 ? 'initial' : 'update');
+          }
+        }
+      } catch {
+        // Keep the currently selected mode if inference fails.
+      }
+    }
   };
 
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
@@ -97,7 +113,19 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
             setValidation({ valid: 0, warning: 0, error: 1 });
             alert(xtbResult.error);
           } else {
-            const csvText = xtbResult.wealthfolioCsv || '';
+            const reportTransactions = xtbResult.transactions || [];
+            const reportIds = reportTransactions.map((tx: any) => String(tx.id));
+            let selectedTransactions = reportTransactions;
+            if (mode === 'update' && storage) {
+              try {
+                const raw = await storage.get('xtb.imported.operationIds');
+                const storedIds: string[] = raw ? JSON.parse(raw) : [];
+                selectedTransactions = reportTransactions.filter((tx: any) => !storedIds.includes(String(tx.id)));
+              } catch {
+                selectedTransactions = reportTransactions;
+              }
+            }
+            const csvText = buildWealthfolioCsv(selectedTransactions);
             const lines = csvText.split(/\r?\n/).filter((line: string) => line.trim().length > 0);
             const wfHeaders = lines.length > 0 ? lines[0].split(',') : [];
             const wfRows = lines.slice(1).map((line: string) => {
@@ -111,6 +139,19 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
             setHeaders(wfHeaders);
             setRows(wfRows);
             setWealthfolioCsv(csvText);
+
+            if (storage) {
+              try {
+                const raw = await storage.get('xtb.imported.operationIds');
+                const storedIds: string[] = raw ? JSON.parse(raw) : [];
+                const merged = mode === 'initial'
+                  ? reportIds
+                  : Array.from(new Set([...storedIds, ...reportIds]));
+                await storage.set('xtb.imported.operationIds', JSON.stringify(merged));
+              } catch {
+                // Conversion succeeded; checkpoint update failure should not hide results.
+              }
+            }
           }
         } else {
           const xlsxResult = await readXLSXFile(file);
@@ -205,7 +246,7 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="initial">{t('import.initial')}</SelectItem>
-                      <SelectItem value="update" disabled>{t('import.update')}</SelectItem>
+                      <SelectItem value="update">{t('import.update')}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

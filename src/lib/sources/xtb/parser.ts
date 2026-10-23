@@ -92,9 +92,20 @@ function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number 
   return [dateStr, symbol, instrumentType, qty, act, uPrice, curr, feeVal, '0', amt, fx, sub, comm].join(',');
 }
 
+export function buildWealthfolioCsv(transactions: TransactionRecord[]): string {
+  const rows: string[] = ['date,symbol,instrumentType,quantity,activityType,unitPrice,currency,fee,tax,amount,fxRate,subtype,comment'];
+  for (const tx of transactions) {
+    const fxRate = determineFXRate(tx.currency, tx.operationType);
+    rows.push(buildWealthfolioRow(tx, 0, fxRate));
+  }
+  return rows.join('\n');
+}
+
 export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial'): Promise<{
   transactions: TransactionRecord[];
   wealthfolioCsv: string;
+  dateFrom?: Date;
+  dateTo?: Date;
   error?: string;
 }> {
   return new Promise((resolve, reject) => {
@@ -219,14 +230,10 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
         transactions.push(tx);
       }
 
-      const csvRows: string[] = ['date,symbol,instrumentType,quantity,activityType,unitPrice,currency,fee,tax,amount,fxRate,subtype,comment'];
+      const dateFrom = transactions.length ? new Date(Math.min(...transactions.map((tx: any) => tx.date.getTime()))) : new Date();
+      const dateTo = transactions.length ? new Date(Math.max(...transactions.map((tx: any) => tx.date.getTime()))) : new Date();
 
-      for (const tx of transactions) {
-        const fxRate = determineFXRate(tx.currency, tx.operationType);
-        csvRows.push(buildWealthfolioRow(tx, 0, fxRate));
-      }
-
-      resolve({ transactions, wealthfolioCsv: csvRows.join('\n') });
+      resolve({ transactions, wealthfolioCsv: buildWealthfolioCsv(transactions), dateFrom, dateTo });
     }).catch((err) => {
       resolve({ transactions: [], wealthfolioCsv: '', error: 'Parser error: ' + (err instanceof Error ? err.message : String(err)) });
     });
