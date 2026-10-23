@@ -31,3 +31,7 @@
 - Exact handling of partial XTB fills and grouped position rows is not fully verified.
 - Dividend tax withholding and fee mapping are not yet represented.
 - Direct Wealthfolio import (Stage 5) is not implemented.
+
+## Release
+
+- v0.1.0 published: https://github.com/Vertig00/wealthfolio-addon-report-converter/releases/tag/v0.1.0
