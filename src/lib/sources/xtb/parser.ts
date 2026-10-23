@@ -52,11 +52,11 @@ function determineFXRate(currency: string, operationType: OperationType): number
 }
 
 function parseQuantityAndPrice(comment: string): { quantity: number; price: number } {
-  const match = comment.match(/@\s*([\d.]+)/);
-  const price = match ? parseNumber(match[1]) : 0;
-  const qtyMatch = comment.match(/(?:BUY|SELL)\s+[\w.]+\s+([\d.]+)(?:\/[\d.]+)?\s*@/i);
+  const priceMatch = comment.match(/@\s*([\d.]+)/);
+  const price = priceMatch ? parseNumber(priceMatch[1]) : 0;
+  const qtyMatch = comment.match(/([\d.]+)(?:\/[\d.]+)?\s*@/i);
   const quantity = qtyMatch ? parseNumber(qtyMatch[1]) : 0;
-  return { quantity, price };
+  return { quantity: quantity > 0 ? quantity : 1, price };
 }
 
 function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number | undefined): string {
@@ -92,7 +92,7 @@ function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number 
   return [dateStr, symbol, instrumentType, qty, act, uPrice, curr, feeVal, '0', amt, fx, sub, comm].join(',');
 }
 
-export function parseXTBReport(file: File): Promise<{
+export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial'): Promise<{
   transactions: TransactionRecord[];
   wealthfolioCsv: string;
   error?: string;
@@ -110,6 +110,41 @@ export function parseXTBReport(file: File): Promise<{
         return;
       }
 
+      const openSheet = sheets.find((sh: any) => sh.name === 'Open Positions');
+      const closedSheet = sheets.find((sh: any) => sh.name === 'Closed Positions');
+
+      const positionMap: Record<string, { ticker: string; category: string }> = {};
+      if (openSheet?.rows) {
+        for (const r of openSheet.rows) {
+          if (!r || r.length < 3) continue;
+          const posId = String(r[1] || '').trim();
+          const ticker = String(r[2] || '').trim();
+          const category = String(r[3] || '').trim();
+          if (/^\d+$/.test(posId) && ticker) {
+            positionMap[posId] = { ticker, category: category || positionMap[posId]?.category || '' };
+          }
+          // summary rows: instrument name, ticker, category
+          const instrument = String(r[1] || '').trim();
+          const t = String(r[2] || '').trim();
+          const cat = String(r[3] || '').trim();
+          if (t && cat && !/^\d+$/.test(instrument)) {
+            // store by ticker for category lookup
+            positionMap['ticker:' + t] = { ticker: t, category: cat };
+          }
+        }
+      }
+      if (closedSheet?.rows) {
+        for (const r of closedSheet.rows) {
+          if (!r || r.length < 4) continue;
+          const ticker = String(r[1] || '').trim();
+          const category = String(r[2] || '').trim();
+          const posId = String(r[23] || '').trim();
+          if (posId && ticker) {
+            positionMap[posId] = { ticker, category: category || positionMap[posId]?.category || '' };
+          }
+        }
+      }
+
       const rows = cashSheet.rows;
       if (!rows || rows.length < 5) {
         resolve({ transactions: [], wealthfolioCsv: '', error: 'No data rows in Cash Operations sheet' });
@@ -117,6 +152,7 @@ export function parseXTBReport(file: File): Promise<{
       }
 
       const transactions: TransactionRecord[] = [];
+      void mode;
 
       for (let i = 5; i < rows.length; i++) {
         const row = rows[i];
@@ -129,14 +165,21 @@ export function parseXTBReport(file: File): Promise<{
         if (!operationType) continue;
 
         const instrument = String(row[1] || '').trim();
-        const ticker = String(row[2] || '').trim();
-        const category = String(row[3] || '').trim();
+        let ticker = String(row[2] || '').trim();
+        let category = String(row[3] || '').trim();
+        const positionId = String(row[9] || '').trim();
+        if (!ticker && positionId && positionMap[positionId]) {
+          ticker = positionMap[positionId].ticker;
+        }
+        if (!category) {
+          if (positionId && positionMap[positionId]?.category) category = positionMap[positionId].category;
+          else if (ticker && positionMap['ticker:' + ticker]?.category) category = positionMap['ticker:' + ticker].category;
+        }
         const time = row[4];
         const amount = parseNumber(row[5]);
         const id = String(row[6] || '').trim();
         const comment = String(row[7] || '').trim();
         const product = String(row[8] || '').trim();
-        const positionId = String(row[9] || '').trim();
 
         let quantity: number | undefined;
         let price: number | undefined;
@@ -146,8 +189,10 @@ export function parseXTBReport(file: File): Promise<{
           quantity = parsed.quantity;
           price = parsed.price;
         } else if (operationType === 'DIVIDEND') {
-          quantity = 1;
-          price = Math.abs(amount);
+          const perShareMatch = comment.match(/([\d.]+)\s*\/\s*SHR/i);
+          const perShare = perShareMatch ? parseNumber(perShareMatch[1]) : Math.abs(amount);
+          quantity = perShare > 0 ? Math.abs(amount) / perShare : 1;
+          price = perShare > 0 ? perShare : Math.abs(amount);
         } else {
           quantity = 1;
           price = 1;

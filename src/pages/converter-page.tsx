@@ -37,7 +37,7 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [source, setSource] = useState<'XTB' | 'mBank'>('XTB');
-  const [mode, setMode] = useState<'initial' | 'update'>('update');
+  const [mode, setMode] = useState<'initial' | 'update'>('initial');
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [validation, setValidation] = useState<{ valid: number; warning: number; error: number }>({ valid: 0, warning: 0, error: 0 });
@@ -92,28 +92,25 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
         }
       } else if (name.endsWith('.xlsx')) {
         if (source === 'XTB') {
-          const xtbResult = await parseXTBReport(file);
+          const xtbResult = await parseXTBReport(file, mode);
           if (xtbResult.error) {
             setValidation({ valid: 0, warning: 0, error: 1 });
             alert(xtbResult.error);
           } else {
-            const transactionRows = xtbResult.transactions?.length
-              ? xtbResult.transactions.map((tx: any) => ({
-                  type: tx.operationType,
-                  instrument: tx.ticker || '',
-                  ticker: tx.ticker || '',
-                  category: tx.ticker?.endsWith('.PL') ? 'STOCK' : 'ETF',
-                  time: formatDate(tx.date),
-                  amount: tx.amount,
-                  id: tx.id,
-                  comment: tx.description || '',
-                  product: '',
-                  positionId: '',
-                }))
-              : [];
-            setHeaders(['type', 'instrument', 'ticker', 'category', 'time', 'amount', 'id', 'comment', 'product', 'positionId']);
-            setRows(transactionRows);
-            setWealthfolioCsv(xtbResult.wealthfolioCsv || '');
+            const csvText = xtbResult.wealthfolioCsv || '';
+            const lines = csvText.split(/\r?\n/).filter((line: string) => line.trim().length > 0);
+            const wfHeaders = lines.length > 0 ? lines[0].split(',') : [];
+            const wfRows = lines.slice(1).map((line: string) => {
+              const values = line.split(',');
+              const row: Record<string, string> = {};
+              wfHeaders.forEach((header: string, index: number) => {
+                row[header] = index < values.length ? values[index] : '';
+              });
+              return row;
+            });
+            setHeaders(wfHeaders);
+            setRows(wfRows);
+            setWealthfolioCsv(csvText);
           }
         } else {
           const xlsxResult = await readXLSXFile(file);
@@ -207,8 +204,8 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="initial" disabled>{t('import.initial')}</SelectItem>
-                      <SelectItem value="update">{t('import.update')}</SelectItem>
+                      <SelectItem value="initial">{t('import.initial')}</SelectItem>
+                      <SelectItem value="update" disabled>{t('import.update')}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>

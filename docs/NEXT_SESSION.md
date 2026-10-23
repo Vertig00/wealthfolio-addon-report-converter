@@ -24,3 +24,12 @@ Stage 1 mostly complete; Stage 2/3 partially complete; Stage 4 in progress.
 
 - No test framework is installed; add one before claiming parser correctness.
 - Node 18.19.1 is below Vite's recommended version.
+
+## Analysis added
+
+- Documented initial import mode and all three XTB sheets in `docs/sources/xtb-initial-import-analysis.md`.
+
+## Implemented
+
+- Initial mode now passes selected mode to parser.
+- Dividend quantity and unit price are derived from `amount / per-share` when comment contains `x.xx/ SHR`.
