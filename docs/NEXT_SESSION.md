@@ -39,3 +39,8 @@ Stage 1 mostly complete; Stage 2/3 partially complete; Stage 4 in progress.
 - Added GitHub Actions release workflow and `docs/RELEASING.md`.
 - GitHub CLI is not installed; release publishing must be verified through GitHub UI or installed later.
 - No release or tag was published.
+
+## Update mode analysis added
+
+- Documented overlap and ID-based deduplication in `docs/sources/xtb-update-import-analysis.md`.
+- No update-mode implementation yet.
