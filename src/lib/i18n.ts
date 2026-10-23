@@ -40,6 +40,11 @@ export const enTranslations: Record<string, string> = {
   'worksheet.allSheets': 'All Sheets',
   'navigation.home': 'Home',
   'toolbar.reset': 'Reset',
+  'import.mode': 'Import mode',
+  'import.initial': 'Initial',
+  'import.update': 'Update',
+  'action.convert': 'Convert',
+  'preview.moreRows': '{count} more rows',
 };
 
 export const plTranslations: Record<string, string> = {
@@ -86,6 +91,11 @@ export const plTranslations: Record<string, string> = {
   'worksheet.allSheets': 'Wszystkie arkusze',
   'navigation.home': 'Start',
   'toolbar.reset': 'Reset',
+  'import.mode': 'Tryb importu',
+  'import.initial': 'Initial',
+  'import.update': 'Update',
+  'action.convert': 'Konwertuj',
+  'preview.moreRows': '{count} więcej wierszy',
 };
 
 type Language = 'en' | 'pl';

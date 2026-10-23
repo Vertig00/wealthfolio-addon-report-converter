@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { readXLSXFile, readCSVFile } from '../lib/file-readers';
 import { parseXTBReport } from '../lib/sources/xtb';
 import {
@@ -34,8 +34,11 @@ function formatDate(d: any): string {
 }
 
 export function ConverterPage({ t, files }: { t: (key: string) => string; files: any }) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [source, setSource] = useState<'XTB' | 'mBank'>('XTB');
+  const [mode, setMode] = useState<'initial' | 'update'>('update');
+  const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [validation, setValidation] = useState<{ valid: number; warning: number; error: number }>({ valid: 0, warning: 0, error: 0 });
   const [rows, setRows] = useState<any[]>([]);
@@ -53,20 +56,33 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
     setValidation({ valid, warning: 0, error: errorCount });
   }, [rows]);
 
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selected = e.target.files?.[0];
-    if (!selected) return;
-    setFile(selected);
-    setIsLoading(true);
-    setValidation({ valid: 0, warning: 0, error: 0 });
+  const resetResults = () => {
     setRows([]);
     setHeaders([]);
     setWealthfolioCsv('');
+    setValidation({ valid: 0, warning: 0, error: 0 });
+  };
 
-    const name = selected.name.toLowerCase();
+  const handleFile = (selected: File) => {
+    setFile(selected);
+    resetResults();
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const selected = e.dataTransfer.files?.[0];
+    if (selected) handleFile(selected);
+  };
+
+  const handleConvert = async () => {
+    if (!file) return;
+    setIsLoading(true);
+    resetResults();
+    const name = file.name.toLowerCase();
     try {
       if (name.endsWith('.csv')) {
-        const csvResult = await readCSVFile(selected);
+        const csvResult = await readCSVFile(file);
         if (csvResult.errors.length > 0) {
           setValidation({ valid: 0, warning: 0, error: csvResult.errors.length });
           alert(t('error.invalidCSV'));
@@ -76,7 +92,7 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
         }
       } else if (name.endsWith('.xlsx')) {
         if (source === 'XTB') {
-          const xtbResult = await parseXTBReport(selected);
+          const xtbResult = await parseXTBReport(file);
           if (xtbResult.error) {
             setValidation({ valid: 0, warning: 0, error: 1 });
             alert(xtbResult.error);
@@ -100,7 +116,7 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
             setWealthfolioCsv(xtbResult.wealthfolioCsv || '');
           }
         } else {
-          const xlsxResult = await readXLSXFile(selected);
+          const xlsxResult = await readXLSXFile(file);
           if (xlsxResult.error || xlsxResult.sheets.length === 0) {
             setValidation({ valid: 0, warning: 0, error: 1 });
             alert(t('error.invalidXLSX'));
@@ -143,29 +159,66 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
             <CardTitle>{t('preview.title')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">{t('source.select')}</label>
-                <Select value={source} onValueChange={(v) => setSource(v as 'XTB' | 'mBank')}>
-                  <SelectTrigger>
-                    <SelectValue placeholder={t('source.select')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="XTB">{t('source.XTB')}</SelectItem>
-                    <SelectItem value="mBank">{t('source.mBank')}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">{t('upload.selectFile')}</label>
-                <Input type="file" accept=".csv,.xlsx" onChange={handleFileChange} />
-              </div>
+            <div
+              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={handleDrop}
+              className={`flex flex-col items-center justify-center gap-3 rounded-md border-2 border-dashed p-6 text-center transition-colors ${isDragging ? 'border-primary bg-primary/5' : 'border-border'}`}
+            >
+              <p className="text-sm text-muted-foreground">{t('upload.dropZone')}</p>
+              <Button type="button" onClick={() => fileInputRef.current?.click()}>
+                {t('upload.selectFile')}
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,.xlsx"
+                className="hidden"
+                onChange={(e) => {
+                  const selected = e.target.files?.[0];
+                  if (selected) handleFile(selected);
+                }}
+              />
+              {file && (
+                <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                  {file.name}
+                </div>
+              )}
             </div>
 
             {file && (
-              <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                {file.name}
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">{t('source.select')}</label>
+                  <Select value={source} onValueChange={(v) => setSource(v as 'XTB' | 'mBank')}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={t('source.select')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="XTB">{t('source.XTB')}</SelectItem>
+                      <SelectItem value="mBank" disabled>{t('source.mBank')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">{t('import.mode')}</label>
+                  <Select value={mode} onValueChange={(v) => setMode(v as 'initial' | 'update')}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="initial" disabled>{t('import.initial')}</SelectItem>
+                      <SelectItem value="update">{t('import.update')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
+            )}
+
+            {file && (
+              <Button onClick={handleConvert} disabled={isLoading}>
+                {isLoading ? t('export.loading') : t('action.convert')}
+              </Button>
             )}
 
             {isLoading && <Skeleton className="h-6 w-32" />}
@@ -199,20 +252,22 @@ export function ConverterPage({ t, files }: { t: (key: string) => string; files:
                 </Table>
                 {rows.length > 50 && (
                   <div className="px-4 py-2 text-sm text-muted-foreground">
-                    {rows.length - 50} more rows
+                    {t('preview.moreRows').replace('{count}', String(rows.length - 50))}
                   </div>
                 )}
               </div>
             )}
 
-            <div className="flex items-center gap-3">
-              <Button onClick={handleDownload} disabled={rows.length === 0 || isLoading}>
-                {isLoading ? t('export.loading') : t('export.download')}
-              </Button>
-              {validation.valid > 0 && <Badge variant="success">{validation.valid} {t('validation.valid')}</Badge>}
-              {validation.warning > 0 && <Badge variant="warning">{validation.warning} {t('validation.warning')}</Badge>}
-              {validation.error > 0 && <Badge variant="destructive">{validation.error} {t('validation.error')}</Badge>}
-            </div>
+            {rows.length > 0 && (
+              <div className="flex items-center gap-3">
+                <Button onClick={handleDownload}>
+                  {t('export.download')}
+                </Button>
+                {validation.valid > 0 && <Badge variant="success">{validation.valid} {t('validation.valid')}</Badge>}
+                {validation.warning > 0 && <Badge variant="warning">{validation.warning} {t('validation.warning')}</Badge>}
+                {validation.error > 0 && <Badge variant="destructive">{validation.error} {t('validation.error')}</Badge>}
+              </div>
+            )}
           </CardContent>
         </Card>
       </PageContent>
