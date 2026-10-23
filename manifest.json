@@ -1,7 +1,7 @@
 {
   "id": "wealthfolio-addon-report-converter",
   "name": "wealthfolio-addon-report-converter",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "A wealthfolio addon that convert broker reports to wealthfolio",
   "author": "Vertig0",
   "main": "dist/addon.js",
@@ -9,7 +9,11 @@
   "minWealthfolioVersion": "3.9.0",
   "enabled": true,
   "contributes": {
-    "routes": [{ "id": "wealthfolio-addon-report-converter" }],
+    "routes": [
+      {
+        "id": "wealthfolio-addon-report-converter"
+      }
+    ],
     "links": {
       "sidebar": [
         {
@@ -35,25 +39,40 @@
   "permissions": [
     {
       "category": "files",
-      "functions": ["openCsvDialog", "openSaveDialog"],
+      "functions": [
+        "openCsvDialog",
+        "openSaveDialog"
+      ],
       "purpose": "Import CSV files and export data to files"
     },
     {
       "category": "events",
-      "functions": ["onDrop", "onUpdateComplete", "onSyncComplete"],
+      "functions": [
+        "onDrop",
+        "onUpdateComplete",
+        "onSyncComplete"
+      ],
       "purpose": "Listen for application events"
     },
     {
       "category": "accounts",
-      "functions": ["getAll"],
+      "functions": [
+        "getAll"
+      ],
       "purpose": "Read accounts for data import"
     },
     {
       "category": "activities",
-      "functions": ["getAll", "import"],
+      "functions": [
+        "getAll",
+        "import"
+      ],
       "purpose": "Read and import transaction activities"
     }
   ],
-  "keywords": ["wealthfolio", "addon"],
+  "keywords": [
+    "wealthfolio",
+    "addon"
+  ],
   "license": "MIT"
 }

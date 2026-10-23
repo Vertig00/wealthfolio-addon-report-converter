@@ -19,6 +19,13 @@
 - `src/pages/converter-page.tsx` — upload, preview, download.
 - `local-samples/wealthfolio/wealthfolio_activities_v2.csv` — reference Wealthfolio activity format.
 
+## Release configuration
+
+- GitHub remote: `https://github.com/Vertig00/wealthfolio-addon-report-converter.git`.
+- GitHub CLI (`gh`) is installed and authenticated as `Vertig00`.
+- Release workflow: `.github/workflows/release.yml`.
+- Installable artifact is created by `pnpm run package` as `dist/*..zip`.
+
 ## Open questions
 
 - Exact handling of partial XTB fills and grouped position rows is not fully verified.

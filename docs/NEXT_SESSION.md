@@ -33,3 +33,9 @@ Stage 1 mostly complete; Stage 2/3 partially complete; Stage 4 in progress.
 
 - Initial mode now passes selected mode to parser.
 - Dividend quantity and unit price are derived from `amount / per-share` when comment contains `x.xx/ SHR`.
+
+## Release setup added
+
+- Added GitHub Actions release workflow and `docs/RELEASING.md`.
+- GitHub CLI is not installed; release publishing must be verified through GitHub UI or installed later.
+- No release or tag was published.
