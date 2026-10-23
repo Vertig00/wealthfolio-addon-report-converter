@@ -37,7 +37,9 @@ jobs:
 
       - name: Verify tag matches project version
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          TAG_INPUT="${{ github.event.inputs.tag }}"
+          TAG_SOURCE="${TAG_INPUT:-$GITHUB_REF_NAME}"
+          TAG="${TAG_SOURCE#v}"
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
           MANIFEST_VERSION="$(node -p "require('./manifest.json').version")"
           test "$TAG" = "$PACKAGE_VERSION"
