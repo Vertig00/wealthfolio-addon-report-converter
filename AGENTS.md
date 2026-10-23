@@ -177,3 +177,55 @@ Do not save every conversational detail. Save concise, durable, project-relevant
 - Do not overwrite user decisions or delete historical decisions without a clear reason.
 - Keep context concise, structured, and useful for future sessions.
 - Do not claim that changes were saved unless the files were actually written successfully.
+
+## Git, GitHub, Commits and Releases
+
+The user controls when commits, pushes, and releases are created. Never perform these actions automatically without an explicit request in the current conversation.
+
+### Before creating a commit
+
+When the user asks to create a commit:
+
+1. Inspect `git status` and review all changes using `git diff`.
+2. Check for accidental inclusion of real financial reports, personal information, secrets, credentials, generated files, or unrelated changes.
+3. Run the relevant tests, lint checks, type checks, and build commands available in the project.
+4. Fix issues caused by the current changes when appropriate. If important checks fail, explain why and do not create the commit without discussing the failure.
+5. Stage only the intended files. Never blindly stage everything with `git add .`.
+6. Create a concise commit message that describes the actual changes.
+7. Verify the resulting commit and report its hash and the checks performed.
+
+### Before pushing to GitHub
+
+Only push when the user explicitly asks to publish or push the changes.
+
+1. Verify the current branch and configured remote.
+2. Check whether the remote contains changes that are not present locally.
+3. Never force-push, rewrite shared history, or overwrite remote changes without explicit authorization.
+4. Push only the intended branch and commits.
+5. Report the destination branch and the result.
+
+If GitHub authentication or repository configuration is missing, explain what needs to be configured. Never ask the user to paste passwords, tokens, or private keys into the conversation.
+
+### Before creating a release
+
+Only create a GitHub Release when the user explicitly requests a release or confirms the proposed release plan.
+
+1. Inspect the latest release, existing tags, and project version.
+2. Propose a version number using semantic versioning unless the user specifies one.
+3. Review the changes since the previous release.
+4. Run available quality checks and verify that the release can be built.
+5. Update the version and release documentation where appropriate.
+6. Prepare release notes describing actual changes, fixes, and known limitations.
+7. Create the appropriate version tag and publish the GitHub Release only after the user's explicit request.
+8. Never overwrite an existing tag or release without explicit authorization.
+9. Report the version, tag, commit, test results, and release URL.
+
+### General rules
+
+- Never claim that a commit, push, tag, or release succeeded unless its success has been verified.
+- Keep the working tree and release history understandable.
+- Never commit real broker statements or sensitive financial data.
+- Prefer small, logically grouped commits.
+- If the user says "commit", create a local commit only; do not push or publish a release unless requested.
+- If the user says "publish to GitHub", clarify whether they mean pushing commits or publishing a release if the intent is unclear.
+- If the user says "release version X", verify the release plan and ask for confirmation before publishing it.
