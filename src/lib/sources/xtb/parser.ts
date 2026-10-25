@@ -1,5 +1,6 @@
 import { readXLSXFile } from '../../file-readers';
 import type { TransactionRecord, OperationType } from '../../domain/types';
+import type { ActivityImport } from '@wealthfolio/addon-sdk';
 
 const OPERATION_MAP: Record<string, OperationType> = {
   'Stock purchase': 'BUY',
@@ -100,6 +101,35 @@ export function buildWealthfolioCsv(transactions: TransactionRecord[]): string {
     rows.push(buildWealthfolioRow(tx, 0, fxRate));
   }
   return rows.join('\n');
+}
+
+export function toActivityImport(tx: TransactionRecord, accountId: string): ActivityImport {
+  const mapSymbol = (ticker: string): string => {
+    if (ticker.endsWith('.PL')) return ticker.slice(0, -3) + '.WA';
+    if (ticker.endsWith('.UK')) return ticker.slice(0, -3) + '.L';
+    return ticker;
+  };
+  const category = String((tx.metadata as any)?.category || '').trim().toUpperCase();
+  const isCash = tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || String(tx.ticker || '').startsWith('$CASH');
+  return {
+    accountId,
+    activityType: tx.operationType,
+    date: tx.date,
+    symbol: mapSymbol(tx.ticker || ''),
+    instrumentType: isCash ? undefined : (category === 'ETF' ? 'ETF' : 'EQUITY'),
+    quantity: tx.quantity,
+    unitPrice: tx.price,
+    currency: tx.currency,
+    fee: 0,
+    tax: 0,
+    amount: tx.operationType === 'BUY' || tx.operationType === 'SELL' ? undefined : tx.amount,
+    fxRate: tx.currency === 'USD' && (tx.operationType === 'BUY' || tx.operationType === 'SELL') ? 3.87 : undefined,
+    comment: tx.description,
+    sourceSystem: 'XTB',
+    sourceRecordId: tx.id,
+    isValid: true,
+    isDraft: false,
+  } as unknown as ActivityImport;
 }
 
 export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial'): Promise<{

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { readXLSXFile, readCSVFile } from '../lib/file-readers';
-import { parseXTBReport, buildWealthfolioCsv } from '../lib/sources/xtb';
+import { parseXTBReport, buildWealthfolioCsv, toActivityImport } from '../lib/sources/xtb';
 import {
   Page,
   PageHeader,
@@ -25,6 +25,15 @@ import {
   Badge,
   EmptyPlaceholder,
   Skeleton,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
 } from '@wealthfolio/ui';
 
 function formatDate(d: any): string {
@@ -33,17 +42,24 @@ function formatDate(d: any): string {
   return String(d);
 }
 
-export function ConverterPage({ t, files, storage }: { t: (key: string) => string; files: any; storage: any }) {
+export function ConverterPage({ t, files, storage, accounts, activities, navigation }: { t: (key: string) => string; files: any; storage: any; accounts: any; activities: any; navigation: any }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [accountList, setAccountList] = useState<any[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>('');
   const [file, setFile] = useState<File | null>(null);
   const [source, setSource] = useState<'XTB' | 'mBank'>('XTB');
   const [mode, setMode] = useState<'initial' | 'update'>('initial');
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [validation, setValidation] = useState<{ valid: number; warning: number; error: number }>({ valid: 0, warning: 0, error: 0 });
   const [rows, setRows] = useState<any[]>([]);
   const [headers, setHeaders] = useState<string[]>([]);
   const [wealthfolioCsv, setWealthfolioCsv] = useState<string>('');
+  const [convertedTransactions, setConvertedTransactions] = useState<any[]>([]);
+  const [importSummary, setImportSummary] = useState<string>('');
+  const [statusMessage, setStatusMessage] = useState<string>('');
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
 
   useEffect(() => {
     let valid = 0;
@@ -56,11 +72,30 @@ export function ConverterPage({ t, files, storage }: { t: (key: string) => strin
     setValidation({ valid, warning: 0, error: errorCount });
   }, [rows]);
 
+  useEffect(() => {
+    if (!accounts) return;
+    accounts.getAll().then((result: any[]) => {
+      setAccountList(result || []);
+      if (result && result.length > 0) setSelectedAccountId(result[0].id);
+    }).catch(() => setAccountList([]));
+  }, [accounts]);
+
   const resetResults = () => {
     setRows([]);
     setHeaders([]);
     setWealthfolioCsv('');
+    setConvertedTransactions([]);
+    setImportSummary('');
+    setStatusMessage('');
     setValidation({ valid: 0, warning: 0, error: 0 });
+  };
+
+  const startOver = () => {
+    setFile(null);
+    setSource('XTB');
+    setMode('initial');
+    resetResults();
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleFile = async (selected: File) => {
@@ -111,7 +146,7 @@ export function ConverterPage({ t, files, storage }: { t: (key: string) => strin
           const xtbResult = await parseXTBReport(file, mode);
           if (xtbResult.error) {
             setValidation({ valid: 0, warning: 0, error: 1 });
-            alert(xtbResult.error);
+            setStatusMessage(xtbResult.error);
           } else {
             const reportTransactions = xtbResult.transactions || [];
             const reportIds = reportTransactions.map((tx: any) => String(tx.id));
@@ -139,8 +174,8 @@ export function ConverterPage({ t, files, storage }: { t: (key: string) => strin
             setHeaders(wfHeaders);
             setRows(wfRows);
             setWealthfolioCsv(csvText);
+            setConvertedTransactions(selectedTransactions);
             if (wfRows.length === 0) alert(t('update.noNew'));
-
             if (storage) {
               try {
                 const raw = await storage.get('xtb.imported.operationIds');
@@ -158,7 +193,7 @@ export function ConverterPage({ t, files, storage }: { t: (key: string) => strin
           const xlsxResult = await readXLSXFile(file);
           if (xlsxResult.error || xlsxResult.sheets.length === 0) {
             setValidation({ valid: 0, warning: 0, error: 1 });
-            alert(t('error.invalidXLSX'));
+            setStatusMessage(t('error.invalidXLSX'));
           } else {
             const first = xlsxResult.sheets[0];
             setHeaders(first.rows[0] || []);
@@ -166,11 +201,11 @@ export function ConverterPage({ t, files, storage }: { t: (key: string) => strin
           }
         }
       } else {
-        alert(t('error.unsupportedFormat'));
+        setStatusMessage(t('error.unsupportedFormat'));
       }
     } catch (e) {
       setValidation({ valid: 0, warning: 0, error: 1 });
-      alert('Error reading file: ' + (e instanceof Error ? e.message : String(e)));
+      setStatusMessage('Error reading file: ' + (e instanceof Error ? e.message : String(e)));
     } finally {
       setIsLoading(false);
     }
@@ -178,14 +213,57 @@ export function ConverterPage({ t, files, storage }: { t: (key: string) => strin
 
   const handleDownload = async () => {
     if (rows.length === 0 && !wealthfolioCsv) {
-      alert(t('error.emptyFile'));
+      setStatusMessage(t('error.emptyFile'));
       return;
     }
     try {
       const csvContent = wealthfolioCsv || rows.map((row: any) => Object.values(row).map(v => String(v ?? '').includes(',') ? `"${String(v ?? '')}"` : String(v ?? '')).join(',')).join('\n');
       await files.openSaveDialog(csvContent, source + '_wealthfolio.csv');
     } catch (e) {
-      alert(t('export.error') + ': ' + (e instanceof Error ? e.message : String(e)));
+      setStatusMessage(t('export.error') + ': ' + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
+  const handleImportClick = () => {
+    if (!selectedAccountId || convertedTransactions.length === 0 || !activities) return;
+    setIsConfirmOpen(true);
+  };
+
+  const performImport = async () => {
+    setIsConfirmOpen(false);
+    setIsImporting(true);
+    setImportSummary('');
+    try {
+      const existing = await activities.getAll(selectedAccountId);
+      const deleteIds = (existing || []).map((a: any) => a.id);
+      if (deleteIds.length > 0) {
+        await activities.saveMany({ deleteIds });
+      }
+      const imports = convertedTransactions.map((tx: any) => toActivityImport(tx, selectedAccountId));
+      const checked = await activities.checkImport(imports);
+      const invalid = (checked || []).filter((a: any) => a.isValid === false);
+      if (invalid.length > 0) {
+        const firstError = invalid[0]?.errors ? JSON.stringify(invalid[0].errors) : 'unknown';
+        setStatusMessage('Import validation failed for ' + invalid.length + ' records: ' + firstError);
+        return;
+      }
+      const result = await activities.import(checked || imports);
+      const summary = result?.summary;
+      const firstActivityError = (result?.activities || []).find((a: any) => a.errors && Object.keys(a.errors).length > 0);
+      if (firstActivityError) {
+        setStatusMessage('Import returned errors: ' + JSON.stringify(firstActivityError.errors));
+      }
+      setImportSummary(summary ? `Imported: ${summary.imported}, skipped: ${summary.skipped}, duplicates: ${summary.duplicates}` : 'Import completed');
+      try {
+        if (navigation && selectedAccountId) await navigation.navigate('/accounts/' + selectedAccountId);
+      } catch {
+        // Navigation is best-effort; import already succeeded.
+      }
+      startOver();
+    } catch (e) {
+      setStatusMessage('Import error: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setIsImporting(false);
     }
   };
 
@@ -198,6 +276,20 @@ export function ConverterPage({ t, files, storage }: { t: (key: string) => strin
             <CardTitle>{t('preview.title')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Account</label>
+              <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select account" />
+                </SelectTrigger>
+                <SelectContent>
+                  {accountList.map((account: any) => (
+                    <SelectItem key={account.id} value={account.id}>{account.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <div
               onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
               onDragLeave={() => setIsDragging(false)}
@@ -302,11 +394,44 @@ export function ConverterPage({ t, files, storage }: { t: (key: string) => strin
                 <Button onClick={handleDownload}>
                   {t('export.download')}
                 </Button>
+                <Button onClick={handleImportClick} disabled={isImporting || !selectedAccountId}>
+                  {isImporting ? 'Importing...' : 'Import to account'}
+                </Button>
                 {validation.valid > 0 && <Badge variant="success">{validation.valid} {t('validation.valid')}</Badge>}
                 {validation.warning > 0 && <Badge variant="warning">{validation.warning} {t('validation.warning')}</Badge>}
                 {validation.error > 0 && <Badge variant="destructive">{validation.error} {t('validation.error')}</Badge>}
               </div>
             )}
+
+            {statusMessage && (
+              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {statusMessage}
+              </div>
+            )}
+
+            {importSummary && (
+              <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                {importSummary}
+              </div>
+            )}
+
+            <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Confirm initial import</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will delete all existing activities in the selected account and import the converted records. Continue?
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={performImport}>Import</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          <div className="flex justify-end">
+            <Button variant="outline" onClick={startOver}>Start over</Button>
+          </div>
           </CardContent>
         </Card>
       </PageContent>
