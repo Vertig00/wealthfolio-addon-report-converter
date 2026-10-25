@@ -63,7 +63,8 @@ function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number 
   const dateStr = tx.date.toISOString().replace('Z', '').replace(/\.\d+$/, '');
   const symbol = mapSymbol(tx.ticker || '');
   const category = String((tx.metadata as any)?.category || '').trim().toUpperCase();
-  const instrumentType = category === 'ETF' ? 'ETF' : 'EQUITY';
+  const isCashOperation = tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || String(tx.ticker || '').startsWith('$CASH');
+  const instrumentType = isCashOperation ? '' : (category === 'ETF' ? 'ETF' : 'EQUITY');
   let qty = '';
   let act = tx.operationType;
   let uPrice = '';

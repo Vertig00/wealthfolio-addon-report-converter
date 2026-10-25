@@ -139,6 +139,7 @@ export function ConverterPage({ t, files, storage }: { t: (key: string) => strin
             setHeaders(wfHeaders);
             setRows(wfRows);
             setWealthfolioCsv(csvText);
+            if (wfRows.length === 0) alert(t('update.noNew'));
 
             if (storage) {
               try {
@@ -246,7 +247,7 @@ export function ConverterPage({ t, files, storage }: { t: (key: string) => strin
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="initial">{t('import.initial')}</SelectItem>
-                      <SelectItem value="update">{t('import.update')}</SelectItem>
+                      <SelectItem value="update" disabled>{t('import.update')}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
