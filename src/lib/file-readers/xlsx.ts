@@ -51,7 +51,14 @@ export async function readXLSXFile(file: File): Promise<{
 }> {
   try {
     const data = await file.arrayBuffer();
-    const workbook = read(data);
+    const originalError = console.error;
+    console.error = () => {};
+    let workbook: any;
+    try {
+      workbook = read(data);
+    } finally {
+      console.error = originalError;
+    }
     const sheets = readXLSXSheets(workbook);
     return { sheets, error: undefined };
   } catch (err) {
