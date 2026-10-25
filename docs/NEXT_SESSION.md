@@ -44,3 +44,8 @@ Stage 1 mostly complete; Stage 2/3 partially complete; Stage 4 in progress.
 
 - Documented overlap and ID-based deduplication in `docs/sources/xtb-update-import-analysis.md`.
 - No update-mode implementation yet.
+
+## Direct import analysis added
+
+- Documented SDK-based initial import flow in `docs/sources/xtb-direct-import-analysis.md`.
+- No direct import implementation yet.

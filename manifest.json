@@ -65,7 +65,9 @@
       "category": "activities",
       "functions": [
         "getAll",
-        "import"
+        "import",
+        "saveMany",
+        "checkImport"
       ],
       "purpose": "Read and import transaction activities"
     }
