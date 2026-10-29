@@ -172,8 +172,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
                   if (isCashTx(tx)) return `CASH|${tx.operationType}|${date}|${amt}|${curr}`;
                   const symbol = mapSymbol(String(tx.ticker || ''));
                   const qty = norm(tx.quantity);
-                  const price = norm(tx.price);
-                  return `TRADE|${tx.operationType}|${date}|${symbol}|${qty}|${price}|${curr}`;
+                  return `TRADE|${tx.operationType}|${date}|${symbol}|${qty}|${curr}`;
                 };
                 const isCashActivity = (a: any) => a.activityType === 'INTEREST' || a.activityType === 'DEPOSIT' || a.activityType === 'WITHDRAWAL' || !a.assetSymbol;
                 const activityKey = (a: any) => {
@@ -182,8 +181,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
                   const curr = a.currency;
                   if (isCashActivity(a)) return `CASH|${a.activityType}|${date}|${amt}|${curr}`;
                   const qty = norm(a.quantity);
-                  const price = norm(a.unitPrice);
-                  return `TRADE|${a.activityType}|${date}|${a.assetSymbol}|${qty}|${price}|${curr}`;
+                  return `TRADE|${a.activityType}|${date}|${a.assetSymbol}|${qty}|${curr}`;
                 };
                 const activityKeys = (existing || []).map((a: any) => activityKey(a));
                 selectedTransactions = reportTransactions.filter((tx: any) => {
@@ -224,7 +222,10 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             setRows(wfRows);
             setWealthfolioCsv(csvText);
             setConvertedTransactions(selectedTransactions);
-            if (wfRows.length === 0) setStatusMessage(t('update.noNew'));
+            if (mode === 'update') {
+              if (wfRows.length === 0) setStatusMessage(t('update.noNew'));
+              else setStatusMessage('Update mode: ' + (reportTransactions.length - selectedTransactions.length) + ' existing/duplicate, ' + selectedTransactions.length + ' new');
+            }
           }
         } else {
           const xlsxResult = await readXLSXFile(file);
