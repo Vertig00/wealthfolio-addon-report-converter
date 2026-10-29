@@ -40,5 +40,5 @@
   "worksheet.allSheets": "All Sheets",
   "navigation.home": "Home",
   "toolbar.reset": "Reset",
-  "update.noNew": "No new transactions to import."
+  "update.noNew": "All transactions in this report already exist in the selected account."
 }

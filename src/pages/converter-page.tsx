@@ -229,25 +229,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             if (mode === 'update') {
               if (wfRows.length === 0) setStatusMessage(t('update.noNew'));
               else {
-                const unmatched = reportTransactions.filter((tx: any) => selectedTransactions.includes(tx));
-                let dateMismatch = 0;
-                let symbolMismatch = 0;
-                let qtyMismatch = 0;
-                for (const tx of unmatched) {
-                  const txDate = tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date).split('T')[0];
-                  const sameTypeDate = (existingActivities).filter((a: any) => a.activityType === tx.operationType && (a.date instanceof Date ? a.date.toISOString().split('T')[0] : String(a.date).split('T')[0]) === txDate);
-                  if (sameTypeDate.length === 0) { dateMismatch++; continue; }
-                  const t = String(tx.ticker || '');
-                  const sym = t.endsWith('.PL') ? t.slice(0,-3)+'.WA' : t.endsWith('.UK') ? t.slice(0,-3)+'.L' : t;
-                  const sameSymbol = sameTypeDate.filter((a: any) => String(a.assetSymbol || '') === sym);
-                  if (sameSymbol.length === 0) { symbolMismatch++; continue; }
-                  qtyMismatch++;
-                }
-                const firstUnmatched = unmatched[0];
-                const firstExistingTrade = existingActivities.find((a: any) => a.activityType === 'BUY' || a.activityType === 'SELL');
-                const txSym = firstUnmatched ? (String(firstUnmatched.ticker || '').endsWith('.PL') ? String(firstUnmatched.ticker).slice(0,-3)+'.WA' : String(firstUnmatched.ticker || '').endsWith('.UK') ? String(firstUnmatched.ticker).slice(0,-3)+'.L' : String(firstUnmatched.ticker || '')) : '';
-                const exSym = firstExistingTrade ? String(firstExistingTrade.assetSymbol || '') : '';
-                setStatusMessage('Update mode: ' + (reportTransactions.length - selectedTransactions.length) + ' existing/duplicate, ' + selectedTransactions.length + ' new (unmatched date:' + dateMismatch + ' symbol:' + symbolMismatch + ' qty:' + qtyMismatch + ' txSym:' + txSym + ' exSym:' + exSym + ')');
+                setStatusMessage('Update mode: ' + (reportTransactions.length - selectedTransactions.length) + ' existing, ' + selectedTransactions.length + ' new');
               }
             }
           }

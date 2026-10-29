@@ -41,5 +41,5 @@
   "worksheet.allSheets": "Wszystkie arkusze",
   "navigation.home": "Start",
   "toolbar.reset": "Reset",
-  "update.noNew": "Brak nowych transakcji do zaimportowania."
+  "update.noNew": "Wszystkie transakcje z tego raportu już istnieją na wybranym koncie."
 }
