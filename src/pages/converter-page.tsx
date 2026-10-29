@@ -173,8 +173,9 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
                   const curr = tx.currency;
                   if (isCashTx(tx)) return `CASH|${tx.operationType}|${date}|${amt}|${curr}`;
                   const symbol = mapSymbol(String(tx.ticker || ''));
+                  const baseSymbol = symbol.replace(/\.(WA|L|DE|FR)$/i, '');
                   const qty = norm(tx.quantity);
-                  return `TRADE|${tx.operationType}|${date}|${symbol}|${qty}|${curr}`;
+                  return `TRADE|${tx.operationType}|${date}|${baseSymbol}|${qty}|${curr}`;
                 };
                 const isCashActivity = (a: any) => a.activityType === 'INTEREST' || a.activityType === 'DEPOSIT' || a.activityType === 'WITHDRAWAL' || !a.assetSymbol;
                 const activityKey = (a: any) => {
@@ -183,7 +184,8 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
                   const curr = a.currency;
                   if (isCashActivity(a)) return `CASH|${a.activityType}|${date}|${amt}|${curr}`;
                   const qty = norm(a.quantity);
-                  return `TRADE|${a.activityType}|${date}|${a.assetSymbol}|${qty}|${curr}`;
+                  const baseAssetSymbol = String(a.assetSymbol || '').replace(/\.(WA|L|DE|FR)$/i, '');
+                  return `TRADE|${a.activityType}|${date}|${baseAssetSymbol}|${qty}|${curr}`;
                 };
                 const activityKeys = (existingActivities).map((a: any) => activityKey(a));
                 selectedTransactions = reportTransactions.filter((tx: any) => {
