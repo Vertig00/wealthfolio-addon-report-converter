@@ -241,7 +241,11 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
                   if (sameSymbol.length === 0) { symbolMismatch++; continue; }
                   qtyMismatch++;
                 }
-                setStatusMessage('Update mode: ' + (reportTransactions.length - selectedTransactions.length) + ' existing/duplicate, ' + selectedTransactions.length + ' new (unmatched date:' + dateMismatch + ' symbol:' + symbolMismatch + ' qty:' + qtyMismatch + ')');
+                const firstUnmatched = unmatched[0];
+                const firstExistingTrade = existingActivities.find((a: any) => a.activityType === 'BUY' || a.activityType === 'SELL');
+                const txSym = firstUnmatched ? (String(firstUnmatched.ticker || '').endsWith('.PL') ? String(firstUnmatched.ticker).slice(0,-3)+'.WA' : String(firstUnmatched.ticker || '').endsWith('.UK') ? String(firstUnmatched.ticker).slice(0,-3)+'.L' : String(firstUnmatched.ticker || '')) : '';
+                const exSym = firstExistingTrade ? String(firstExistingTrade.assetSymbol || '') : '';
+                setStatusMessage('Update mode: ' + (reportTransactions.length - selectedTransactions.length) + ' existing/duplicate, ' + selectedTransactions.length + ' new (unmatched date:' + dateMismatch + ' symbol:' + symbolMismatch + ' qty:' + qtyMismatch + ' txSym:' + txSym + ' exSym:' + exSym + ')');
               }
             }
           }
