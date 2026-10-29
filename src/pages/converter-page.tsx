@@ -151,9 +151,11 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
           } else {
             const reportTransactions = xtbResult.transactions || [];
             let selectedTransactions = reportTransactions;
+            let existingActivities: any[] = [];
             if (mode === 'update' && activities && selectedAccountId) {
               try {
                 const existing = await activities.getAll(selectedAccountId);
+                existingActivities = existing || [];
                 const used = new Set<number>();
                 const norm = (v: any) => {
                   const n = Number(v);
@@ -183,12 +185,12 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
                   const qty = norm(a.quantity);
                   return `TRADE|${a.activityType}|${date}|${a.assetSymbol}|${qty}|${curr}`;
                 };
-                const activityKeys = (existing || []).map((a: any) => activityKey(a));
+                const activityKeys = (existingActivities).map((a: any) => activityKey(a));
                 selectedTransactions = reportTransactions.filter((tx: any) => {
                   // Exact source id match first.
-                  for (let i = 0; i < (existing || []).length; i++) {
+                  for (let i = 0; i < existingActivities.length; i++) {
                     if (used.has(i)) continue;
-                    if (existing[i].sourceRecordId && String(existing[i].sourceRecordId) === String(tx.id)) {
+                    if (existingActivities[i].sourceRecordId && String(existingActivities[i].sourceRecordId) === String(tx.id)) {
                       used.add(i);
                       return false;
                     }
@@ -224,7 +226,23 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             setConvertedTransactions(selectedTransactions);
             if (mode === 'update') {
               if (wfRows.length === 0) setStatusMessage(t('update.noNew'));
-              else setStatusMessage('Update mode: ' + (reportTransactions.length - selectedTransactions.length) + ' existing/duplicate, ' + selectedTransactions.length + ' new');
+              else {
+                const unmatched = reportTransactions.filter((tx: any) => selectedTransactions.includes(tx));
+                let dateMismatch = 0;
+                let symbolMismatch = 0;
+                let qtyMismatch = 0;
+                for (const tx of unmatched) {
+                  const txDate = tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date).split('T')[0];
+                  const sameTypeDate = (existingActivities).filter((a: any) => a.activityType === tx.operationType && (a.date instanceof Date ? a.date.toISOString().split('T')[0] : String(a.date).split('T')[0]) === txDate);
+                  if (sameTypeDate.length === 0) { dateMismatch++; continue; }
+                  const t = String(tx.ticker || '');
+                  const sym = t.endsWith('.PL') ? t.slice(0,-3)+'.WA' : t.endsWith('.UK') ? t.slice(0,-3)+'.L' : t;
+                  const sameSymbol = sameTypeDate.filter((a: any) => String(a.assetSymbol || '') === sym);
+                  if (sameSymbol.length === 0) { symbolMismatch++; continue; }
+                  qtyMismatch++;
+                }
+                setStatusMessage('Update mode: ' + (reportTransactions.length - selectedTransactions.length) + ' existing/duplicate, ' + selectedTransactions.length + ' new (unmatched date:' + dateMismatch + ' symbol:' + symbolMismatch + ' qty:' + qtyMismatch + ')');
+              }
             }
           }
         } else {
