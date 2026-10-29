@@ -151,11 +151,58 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
           } else {
             const reportTransactions = xtbResult.transactions || [];
             let selectedTransactions = reportTransactions;
-            if (mode === 'update' && storage) {
+            if (mode === 'update' && activities && selectedAccountId) {
               try {
-                const raw = await storage.get('xtb.imported.operationIds.v2');
-                const storedIds: string[] = raw ? JSON.parse(raw) : [];
-                selectedTransactions = reportTransactions.filter((tx: any) => !storedIds.includes(String(tx.id)));
+                const existing = await activities.getAll(selectedAccountId);
+                const used = new Set<number>();
+                const norm = (v: any) => {
+                  const n = Number(v);
+                  return isNaN(n) ? String(v ?? '') : n.toFixed(6);
+                };
+                const mapSymbol = (ticker: string) => {
+                  if (ticker.endsWith('.PL')) return ticker.slice(0, -3) + '.WA';
+                  if (ticker.endsWith('.UK')) return ticker.slice(0, -3) + '.L';
+                  return ticker;
+                };
+                const isCashTx = (tx: any) => tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || String(tx.ticker || '').startsWith('$CASH');
+                const txKey = (tx: any) => {
+                  const date = tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date).split('T')[0];
+                  const amt = norm(tx.amount);
+                  const curr = tx.currency;
+                  if (isCashTx(tx)) return `CASH|${tx.operationType}|${date}|${amt}|${curr}`;
+                  const symbol = mapSymbol(String(tx.ticker || ''));
+                  const qty = norm(tx.quantity);
+                  return `TRADE|${tx.operationType}|${date}|${symbol}|${qty}|${amt}|${curr}`;
+                };
+                const isCashActivity = (a: any) => a.activityType === 'INTEREST' || a.activityType === 'DEPOSIT' || a.activityType === 'WITHDRAWAL' || !a.assetSymbol;
+                const activityKey = (a: any) => {
+                  const date = a.date instanceof Date ? a.date.toISOString().split('T')[0] : String(a.date).split('T')[0];
+                  const amt = norm(a.amount);
+                  const curr = a.currency;
+                  if (isCashActivity(a)) return `CASH|${a.activityType}|${date}|${amt}|${curr}`;
+                  const qty = norm(a.quantity);
+                  return `TRADE|${a.activityType}|${date}|${a.assetSymbol}|${qty}|${amt}|${curr}`;
+                };
+                const activityKeys = (existing || []).map((a: any) => activityKey(a));
+                selectedTransactions = reportTransactions.filter((tx: any) => {
+                  // Exact source id match first.
+                  for (let i = 0; i < (existing || []).length; i++) {
+                    if (used.has(i)) continue;
+                    if (existing[i].sourceRecordId && String(existing[i].sourceRecordId) === String(tx.id)) {
+                      used.add(i);
+                      return false;
+                    }
+                  }
+                  const key = txKey(tx);
+                  for (let i = 0; i < activityKeys.length; i++) {
+                    if (used.has(i)) continue;
+                    if (activityKeys[i] === key) {
+                      used.add(i);
+                      return false;
+                    }
+                  }
+                  return true;
+                });
               } catch {
                 selectedTransactions = reportTransactions;
               }
