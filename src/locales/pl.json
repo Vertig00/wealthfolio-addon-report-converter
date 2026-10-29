@@ -40,5 +40,6 @@
   "worksheet.select": "Wybierz arkusz",
   "worksheet.allSheets": "Wszystkie arkusze",
   "navigation.home": "Start",
-  "toolbar.reset": "Reset"
+  "toolbar.reset": "Reset",
+  "update.noNew": "Brak nowych transakcji do zaimportowania."
 }

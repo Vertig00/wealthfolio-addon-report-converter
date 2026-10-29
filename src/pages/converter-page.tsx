@@ -76,7 +76,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
     if (!accounts) return;
     accounts.getAll().then((result: any[]) => {
       setAccountList(result || []);
-      if (result && result.length > 0) setSelectedAccountId(result[0].id);
+      setSelectedAccountId('');
     }).catch(() => setAccountList([]));
   }, [accounts]);
 
@@ -92,6 +92,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
 
   const startOver = () => {
     setFile(null);
+    setSelectedAccountId('');
     setSource('XTB');
     setMode('initial');
     resetResults();
@@ -134,10 +135,10 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
     try {
       if (name.endsWith('.csv')) {
         const csvResult = await readCSVFile(file);
-        if (csvResult.errors.length > 0) {
-          setValidation({ valid: 0, warning: 0, error: csvResult.errors.length });
-          alert(t('error.invalidCSV'));
-        } else {
+          if (csvResult.errors.length > 0) {
+            setValidation({ valid: 0, warning: 0, error: csvResult.errors.length });
+            setStatusMessage(t('error.invalidCSV'));
+          } else {
           setHeaders(csvResult.headers);
           setRows(csvResult.rows);
         }
@@ -149,11 +150,10 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             setStatusMessage(xtbResult.error);
           } else {
             const reportTransactions = xtbResult.transactions || [];
-            const reportIds = reportTransactions.map((tx: any) => String(tx.id));
             let selectedTransactions = reportTransactions;
             if (mode === 'update' && storage) {
               try {
-                const raw = await storage.get('xtb.imported.operationIds');
+                const raw = await storage.get('xtb.imported.operationIds.v2');
                 const storedIds: string[] = raw ? JSON.parse(raw) : [];
                 selectedTransactions = reportTransactions.filter((tx: any) => !storedIds.includes(String(tx.id)));
               } catch {
@@ -175,19 +175,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             setRows(wfRows);
             setWealthfolioCsv(csvText);
             setConvertedTransactions(selectedTransactions);
-            if (wfRows.length === 0) alert(t('update.noNew'));
-            if (storage) {
-              try {
-                const raw = await storage.get('xtb.imported.operationIds');
-                const storedIds: string[] = raw ? JSON.parse(raw) : [];
-                const merged = mode === 'initial'
-                  ? reportIds
-                  : Array.from(new Set([...storedIds, ...reportIds]));
-                await storage.set('xtb.imported.operationIds', JSON.stringify(merged));
-              } catch {
-                // Conversion succeeded; checkpoint update failure should not hide results.
-              }
-            }
+            if (wfRows.length === 0) setStatusMessage(t('update.noNew'));
           }
         } else {
           const xlsxResult = await readXLSXFile(file);
@@ -234,10 +222,12 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
     setIsImporting(true);
     setImportSummary('');
     try {
-      const existing = await activities.getAll(selectedAccountId);
-      const deleteIds = (existing || []).map((a: any) => a.id);
-      if (deleteIds.length > 0) {
-        await activities.saveMany({ deleteIds });
+      if (mode === 'initial') {
+        const existing = await activities.getAll(selectedAccountId);
+        const deleteIds = (existing || []).map((a: any) => a.id);
+        if (deleteIds.length > 0) {
+          await activities.saveMany({ deleteIds });
+        }
       }
       const imports = convertedTransactions.map((tx: any) => toActivityImport(tx, selectedAccountId));
       const checked = await activities.checkImport(imports);
@@ -254,6 +244,19 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
         setStatusMessage('Import returned errors: ' + JSON.stringify(firstActivityError.errors));
       }
       setImportSummary(summary ? `Imported: ${summary.imported}, skipped: ${summary.skipped}, duplicates: ${summary.duplicates}` : 'Import completed');
+      if (storage) {
+        try {
+          const raw = await storage.get('xtb.imported.operationIds.v2');
+          const storedIds: string[] = raw ? JSON.parse(raw) : [];
+          const importedIds = convertedTransactions.map((tx: any) => String(tx.id));
+          const merged = mode === 'initial'
+            ? importedIds
+            : Array.from(new Set([...storedIds, ...importedIds]));
+          await storage.set('xtb.imported.operationIds.v2', JSON.stringify(merged));
+        } catch {
+          // Import succeeded; checkpoint update failure should not hide the result.
+        }
+      }
       try {
         if (navigation && selectedAccountId) await navigation.navigate('/accounts/' + selectedAccountId);
       } catch {
@@ -339,7 +342,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="initial">{t('import.initial')}</SelectItem>
-                      <SelectItem value="update" disabled>{t('import.update')}</SelectItem>
+                      <SelectItem value="update">{t('import.update')}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -347,7 +350,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             )}
 
             {file && (
-              <Button onClick={handleConvert} disabled={isLoading}>
+              <Button onClick={handleConvert} disabled={isLoading || !selectedAccountId}>
                 {isLoading ? t('export.loading') : t('action.convert')}
               </Button>
             )}
@@ -418,9 +421,11 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>Confirm initial import</AlertDialogTitle>
+                  <AlertDialogTitle>{mode === 'initial' ? 'Confirm initial import' : 'Confirm update import'}</AlertDialogTitle>
                   <AlertDialogDescription>
-                    This will delete all existing activities in the selected account and import the converted records. Continue?
+                    {mode === 'initial'
+                      ? 'This will delete all existing activities in the selected account and import the converted records. Continue?'
+                      : 'This will import ' + convertedTransactions.length + ' new records into the selected account. Existing activities will remain unchanged. Continue?'}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>

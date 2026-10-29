@@ -39,5 +39,6 @@
   "worksheet.select": "Select Worksheet",
   "worksheet.allSheets": "All Sheets",
   "navigation.home": "Home",
-  "toolbar.reset": "Reset"
+  "toolbar.reset": "Reset",
+  "update.noNew": "No new transactions to import."
 }

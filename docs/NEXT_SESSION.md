@@ -49,3 +49,10 @@ Stage 1 mostly complete; Stage 2/3 partially complete; Stage 4 in progress.
 
 - Documented SDK-based initial import flow in `docs/sources/xtb-direct-import-analysis.md`.
 - No direct import implementation yet.
+
+## Current update (this session)
+
+- Re-enabled update mode in the source selector.
+- Verified update-mode deduplication against local XTB samples: 4 new operations out of 6 in the update report.
+- Disabled direct Wealthfolio import while in update mode, because append/import behavior is not implemented yet.
+- `tsc --noEmit` and `vite build` pass.
