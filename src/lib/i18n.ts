@@ -45,6 +45,7 @@ export const enTranslations: Record<string, string> = {
   'import.update': 'Update',
   'action.convert': 'Convert',
   'preview.moreRows': '{count} more rows',
+  'update.noNew': 'All transactions in this report already exist in the selected account.',
 };
 
 export const plTranslations: Record<string, string> = {
@@ -96,6 +97,7 @@ export const plTranslations: Record<string, string> = {
   'import.update': 'Update',
   'action.convert': 'Konwertuj',
   'preview.moreRows': '{count} więcej wierszy',
+    'update.noNew': 'Brak nowych transkacji do importu.',
 };
 
 type Language = 'en' | 'pl';
