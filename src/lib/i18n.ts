@@ -97,7 +97,7 @@ export const plTranslations: Record<string, string> = {
   'import.update': 'Update',
   'action.convert': 'Konwertuj',
   'preview.moreRows': '{count} więcej wierszy',
-    'update.noNew': 'Brak nowych transkacji do importu.',
+  'update.noNew': 'Wszystkie transakcje z tego raportu już istnieją na wybranym koncie.',
 };
 
 type Language = 'en' | 'pl';
