@@ -1,20 +1,33 @@
-# Wealthfolio Statement Importer — Agent Documentation
+# Wealthfolio Report Converter
 
-This package contains project guidance for an AI coding agent working on a Wealthfolio addon. It is a documentation starter pack, not a complete addon implementation.
+Wealthfolio Desktop addon that converts broker statements in CSV/XLSX format into a Wealthfolio-compatible activity file.
 
-## How to use
+## Current support
 
-1. Generate the addon project using the official Wealthfolio addon tooling, if you have not already done so.
-2. Copy `AGENTS.md` into the project root.
-3. Copy `docs/`, `local-samples/README.md`, and `tests/fixtures/README.md` into the project.
-4. Merge the rules from `docs/GITIGNORE_SNIPPET.md` into the existing `.gitignore`. Do not blindly overwrite project configuration.
-5. Open the project in WSL and start OpenCode from the project root.
-6. Ask the agent to inspect the existing project and propose a plan before implementing the importer.
+- Report source: XTB (CSV/XLSX).
+- Reads XTB `Cash Operations` data and maps supported operations to Wealthfolio activities.
+- Supports initial and update import modes.
+- Preview, validation summary, and downloadable Wealthfolio CSV output.
+- Direct import into a selected Wealthfolio account with confirmation.
+- Polish and English UI.
 
-## Suggested first prompt for OpenCode
+## Development
 
-> Read `AGENTS.md` and every document in `docs/`. Inspect the existing project, installed Wealthfolio SDK version, and available package scripts. Do not implement features yet. Report the project status, propose a staged plan, and list questions that can only be answered after inspecting an XTB report. Do not send local sample files to external services.
+```bash
+pnpm install
+pnpm run type-check
+pnpm run build
+pnpm run package
+```
+
+## Usage
+
+1. Open the addon in Wealthfolio.
+2. Select a target account.
+3. Choose the report source and upload an XTB CSV/XLSX file.
+4. Review the parsed preview and validation summary.
+5. Download the converted file or import it into the selected account.
 
 ## Privacy
 
-Broker statements may contain sensitive financial and identifying data. Keep real files local and outside Git. Only commit synthetic or carefully anonymized samples.
+Broker statements may contain sensitive financial data. Processing is local. Do not commit real broker statements, screenshots, or personal data to Git.

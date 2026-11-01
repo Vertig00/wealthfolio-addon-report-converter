@@ -1,8 +1,8 @@
 {
   "id": "wealthfolio-addon-report-converter",
-  "name": "wealthfolio-addon-report-converter",
-  "version": "0.4.0",
-  "description": "A wealthfolio addon that convert broker reports to wealthfolio",
+  "name": "Wealthfolio Report Converter",
+  "version": "1.0.0",
+  "description": "Convert broker CSV and XLSX statements into Wealthfolio activity files. Supports XTB reports with preview, validation, and downloadable output.",
   "author": "Vertig0",
   "main": "dist/addon.js",
   "sdkVersion": "3.9.0",
@@ -20,7 +20,7 @@
           "id": "wealthfolio-addon-report-converter",
           "route": "wealthfolio-addon-report-converter",
           "label": "Report Converter",
-          "icon": "squares-four",
+          "icon": "files",
           "order": 100
         }
       ]
@@ -40,19 +40,9 @@
     {
       "category": "files",
       "functions": [
-        "openCsvDialog",
         "openSaveDialog"
       ],
-      "purpose": "Import CSV files and export data to files"
-    },
-    {
-      "category": "events",
-      "functions": [
-        "onDrop",
-        "onUpdateComplete",
-        "onSyncComplete"
-      ],
-      "purpose": "Listen for application events"
+      "purpose": "Export converted data to a file"
     },
     {
       "category": "accounts",
@@ -76,5 +66,6 @@
     "wealthfolio",
     "addon"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "icon": "files"
 }

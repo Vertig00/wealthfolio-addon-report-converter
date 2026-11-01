@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { readXLSXFile, readCSVFile } from '../lib/file-readers';
 import { parseXTBReport, buildWealthfolioCsv, toActivityImport } from '../lib/sources/xtb';
+import { SearchableIconSelect } from '../components/searchable-icon-select';
+import { TrendingUp, Wallet, CreditCard, Bitcoin, Building2 } from 'lucide-react';
 import {
   Page,
   PageHeader,
@@ -33,8 +35,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from '@wealthfolio/ui';
+
+type Translate = (key: string, langOrVars?: string | Record<string, unknown> | null, vars?: Record<string, unknown>) => string;
 
 function formatDate(d: any): string {
   if (!d) return '';
@@ -42,8 +45,9 @@ function formatDate(d: any): string {
   return String(d);
 }
 
-export function ConverterPage({ t, files, storage, accounts, activities, navigation }: { t: (key: string) => string; files: any; storage: any; accounts: any; activities: any; navigation: any }) {
+export function ConverterPage({ t, files, storage, accounts, activities, navigation }: { t: Translate; files: any; storage: any; accounts: any; activities: any; navigation: any }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [language, setLanguage] = useState<'en' | 'pl'>('en');
   const [accountList, setAccountList] = useState<any[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string>('');
   const [file, setFile] = useState<File | null>(null);
@@ -59,7 +63,27 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
   const [convertedTransactions, setConvertedTransactions] = useState<any[]>([]);
   const [importSummary, setImportSummary] = useState<string>('');
   const [statusMessage, setStatusMessage] = useState<string>('');
+  const [statusType, setStatusType] = useState<'info' | 'success' | 'warning' | 'error'>('info');
+  const setStatus = (message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
+    setStatusMessage(message);
+    setStatusType(type);
+  };
   const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+
+  const tr = (key: string, vars?: Record<string, unknown>) => t(key, language, vars);
+
+  useEffect(() => {
+    if (!storage) return;
+    storage.get('ui.language').then((value: string | null) => {
+      if (value === 'pl' || value === 'en') setLanguage(value);
+    }).catch(() => undefined);
+  }, [storage]);
+
+  const handleLanguageChange = (value: string) => {
+    const next = value === 'pl' ? 'pl' : 'en';
+    setLanguage(next);
+    storage?.set('ui.language', next).catch(() => undefined);
+  };
 
   useEffect(() => {
     let valid = 0;
@@ -86,7 +110,8 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
     setWealthfolioCsv('');
     setConvertedTransactions([]);
     setImportSummary('');
-    setStatusMessage('');
+    setStatus('');
+    setStatusType('info');
     setValidation({ valid: 0, warning: 0, error: 0 });
   };
 
@@ -135,19 +160,20 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
     try {
       if (name.endsWith('.csv')) {
         const csvResult = await readCSVFile(file);
-          if (csvResult.errors.length > 0) {
-            setValidation({ valid: 0, warning: 0, error: csvResult.errors.length });
-            setStatusMessage(t('error.invalidCSV'));
-          } else {
+        if (csvResult.errors.length > 0) {
+          setValidation({ valid: 0, warning: 0, error: csvResult.errors.length });
+          setStatus(tr('error.invalidCSV'), 'error');
+        } else {
           setHeaders(csvResult.headers);
           setRows(csvResult.rows);
+          setStatus(tr('status.converted', { count: csvResult.rows.length }), 'success');
         }
       } else if (name.endsWith('.xlsx')) {
         if (source === 'XTB') {
           const xtbResult = await parseXTBReport(file, mode);
           if (xtbResult.error) {
             setValidation({ valid: 0, warning: 0, error: 1 });
-            setStatusMessage(xtbResult.error);
+            setStatus(xtbResult.error, 'error');
           } else {
             const reportTransactions = xtbResult.transactions || [];
             let selectedTransactions = reportTransactions;
@@ -189,7 +215,6 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
                 };
                 const activityKeys = (existingActivities).map((a: any) => activityKey(a));
                 selectedTransactions = reportTransactions.filter((tx: any) => {
-                  // Exact source id match first.
                   for (let i = 0; i < existingActivities.length; i++) {
                     if (used.has(i)) continue;
                     if (existingActivities[i].sourceRecordId && String(existingActivities[i].sourceRecordId) === String(tx.id)) {
@@ -224,12 +249,13 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             });
             setHeaders(wfHeaders);
             setRows(wfRows);
+            setStatus(tr('status.converted', { count: wfRows.length }), 'success');
             setWealthfolioCsv(csvText);
             setConvertedTransactions(selectedTransactions);
             if (mode === 'update') {
-              if (wfRows.length === 0) setStatusMessage(t('update.noNew'));
+              if (wfRows.length === 0) setStatus(tr('update.noNew'), 'warning');
               else {
-                setStatusMessage('Update mode: ' + (reportTransactions.length - selectedTransactions.length) + ' existing, ' + selectedTransactions.length + ' new');
+                setStatus(tr('update.summary', { existing: reportTransactions.length - selectedTransactions.length, new: selectedTransactions.length }), 'success');
               }
             }
           }
@@ -237,19 +263,20 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
           const xlsxResult = await readXLSXFile(file);
           if (xlsxResult.error || xlsxResult.sheets.length === 0) {
             setValidation({ valid: 0, warning: 0, error: 1 });
-            setStatusMessage(t('error.invalidXLSX'));
+            setStatus(tr('error.invalidXLSX'), 'error');
           } else {
             const first = xlsxResult.sheets[0];
             setHeaders(first.rows[0] || []);
             setRows(first.rows.slice(1));
+            setStatus(tr('status.converted', { count: Math.max(0, (first.rows || []).length - 1) }), 'success');
           }
         }
       } else {
-        setStatusMessage(t('error.unsupportedFormat'));
+        setStatus(tr('error.unsupportedFormat'), 'error');
       }
     } catch (e) {
       setValidation({ valid: 0, warning: 0, error: 1 });
-      setStatusMessage('Error reading file: ' + (e instanceof Error ? e.message : String(e)));
+      setStatus(tr('error.readingFile', { message: e instanceof Error ? e.message : String(e) }), 'error');
     } finally {
       setIsLoading(false);
     }
@@ -257,14 +284,14 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
 
   const handleDownload = async () => {
     if (rows.length === 0 && !wealthfolioCsv) {
-      setStatusMessage(t('error.emptyFile'));
+      setStatus(tr('error.emptyFile'), 'error');
       return;
     }
     try {
       const csvContent = wealthfolioCsv || rows.map((row: any) => Object.values(row).map(v => String(v ?? '').includes(',') ? `"${String(v ?? '')}"` : String(v ?? '')).join(',')).join('\n');
       await files.openSaveDialog(csvContent, source + '_wealthfolio.csv');
     } catch (e) {
-      setStatusMessage(t('export.error') + ': ' + (e instanceof Error ? e.message : String(e)));
+      setStatus(tr('export.error') + ': ' + (e instanceof Error ? e.message : String(e)), 'error');
     }
   };
 
@@ -290,16 +317,16 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
       const invalid = (checked || []).filter((a: any) => a.isValid === false);
       if (invalid.length > 0) {
         const firstError = invalid[0]?.errors ? JSON.stringify(invalid[0].errors) : 'unknown';
-        setStatusMessage('Import validation failed for ' + invalid.length + ' records: ' + firstError);
+        setStatus(tr('import.validationFailed', { count: invalid.length, error: firstError }), 'error');
         return;
       }
       const result = await activities.import(checked || imports);
       const summary = result?.summary;
       const firstActivityError = (result?.activities || []).find((a: any) => a.errors && Object.keys(a.errors).length > 0);
       if (firstActivityError) {
-        setStatusMessage('Import returned errors: ' + JSON.stringify(firstActivityError.errors));
+        setStatus(tr('import.returnedErrors', { error: JSON.stringify(firstActivityError.errors) }), 'error');
       }
-      setImportSummary(summary ? `Imported: ${summary.imported}, skipped: ${summary.skipped}, duplicates: ${summary.duplicates}` : 'Import completed');
+      setImportSummary(summary ? tr('import.summary', { imported: summary.imported, skipped: summary.skipped, duplicates: summary.duplicates }) : tr('import.completed'));
       if (storage) {
         try {
           const raw = await storage.get('xtb.imported.operationIds.v2');
@@ -320,33 +347,86 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
       }
       startOver();
     } catch (e) {
-      setStatusMessage('Import error: ' + (e instanceof Error ? e.message : String(e)));
+      setStatus(tr('import.error', { message: e instanceof Error ? e.message : String(e) }), 'error');
     } finally {
       setIsImporting(false);
     }
   };
 
+  const statusClass =
+    statusType === 'success'
+      ? 'border-green-500/40 bg-green-500/10 text-green-700 dark:text-green-400'
+      : statusType === 'warning'
+        ? 'border-yellow-500/40 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400'
+        : statusType === 'error'
+          ? 'border-destructive/40 bg-destructive/10 text-destructive'
+          : 'border-border bg-muted/40 text-muted-foreground';
+
   return (
     <Page>
-      <PageHeader heading={t('app.title')} text={t('upload.description')} />
+      <PageHeader heading={tr('app.title')} text={tr('upload.description')} />
       <PageContent withPadding>
         <Card>
-          <CardHeader>
-            <CardTitle>{t('preview.title')}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Account</label>
-              <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select account" />
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardTitle>{tr('preview.title')}</CardTitle>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">{tr('language.select')}</span>
+              <Select value={language} onValueChange={handleLanguageChange}>
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {accountList.map((account: any) => (
-                    <SelectItem key={account.id} value={account.id}>{account.name}</SelectItem>
-                  ))}
+                  <SelectItem value="en">{tr('language.english')}</SelectItem>
+                  <SelectItem value="pl">{tr('language.polish')}</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{tr('account.label')}</label>
+                <SearchableIconSelect
+                  options={accountList.map((account: any) => ({
+                    value: account.id,
+                    label: account.name,
+                    icon: account.accountType === 'SECURITIES' ? <TrendingUp className="h-4 w-4" /> : account.accountType === 'CREDIT_CARD' ? <CreditCard className="h-4 w-4" /> : account.accountType === 'CRYPTOCURRENCY' ? <Bitcoin className="h-4 w-4" /> : <Wallet className="h-4 w-4" />,
+                  }))}
+                  value={selectedAccountId}
+                  onValueChange={setSelectedAccountId}
+                  placeholder={tr('account.placeholder')}
+                  searchPlaceholder={tr('search.placeholder')}
+                  emptyMessage={tr('account.none')}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{tr('source.select')}</label>
+                <SearchableIconSelect
+                  options={[
+                    { value: 'XTB', label: tr('source.XTB'), icon: <TrendingUp className="h-4 w-4" /> },
+                    { value: 'mBank', label: tr('source.mBank'), icon: <Building2 className="h-4 w-4" />, disabled: true },
+                  ]}
+                  value={source}
+                  onValueChange={(v) => setSource(v as 'XTB' | 'mBank')}
+                  placeholder={tr('source.select')}
+                  searchPlaceholder={tr('search.placeholder')}
+                  emptyMessage={tr('source.empty')}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">{tr('import.mode')}</label>
+                <Select value={mode} onValueChange={(v) => setMode(v as 'initial' | 'update')}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="initial">{tr('import.initial')}</SelectItem>
+                    <SelectItem value="update">{tr('import.update')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div
@@ -355,9 +435,9 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
               onDrop={handleDrop}
               className={`flex flex-col items-center justify-center gap-3 rounded-md border-2 border-dashed p-6 text-center transition-colors ${isDragging ? 'border-primary bg-primary/5' : 'border-border'}`}
             >
-              <p className="text-sm text-muted-foreground">{t('upload.dropZone')}</p>
+              <p className="text-sm text-muted-foreground">{tr('upload.dropZone')}</p>
               <Button type="button" onClick={() => fileInputRef.current?.click()}>
-                {t('upload.selectFile')}
+                {tr('upload.selectFile')}
               </Button>
               <input
                 ref={fileInputRef}
@@ -377,37 +457,8 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             </div>
 
             {file && (
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">{t('source.select')}</label>
-                  <Select value={source} onValueChange={(v) => setSource(v as 'XTB' | 'mBank')}>
-                    <SelectTrigger>
-                      <SelectValue placeholder={t('source.select')} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="XTB">{t('source.XTB')}</SelectItem>
-                      <SelectItem value="mBank" disabled>{t('source.mBank')}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">{t('import.mode')}</label>
-                  <Select value={mode} onValueChange={(v) => setMode(v as 'initial' | 'update')}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="initial">{t('import.initial')}</SelectItem>
-                      <SelectItem value="update">{t('import.update')}</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            )}
-
-            {file && (
               <Button onClick={handleConvert} disabled={isLoading || !selectedAccountId}>
-                {isLoading ? t('export.loading') : t('action.convert')}
+                {isLoading ? tr('export.loading') : tr('action.convert')}
               </Button>
             )}
 
@@ -415,13 +466,13 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
 
             {!isLoading && rows.length === 0 && (
               <EmptyPlaceholder
-                title={t('emptyState.title')}
-                description={t('emptyState.description')}
+                title={tr('emptyState.title')}
+                description={tr('emptyState.description')}
               />
             )}
 
             {rows.length > 0 && (
-              <div className="overflow-x-auto rounded-md border border-border">
+              <div className="overflow-x-auto rounded-md border border-border max-h-[420px]">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -442,28 +493,28 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
                 </Table>
                 {rows.length > 50 && (
                   <div className="px-4 py-2 text-sm text-muted-foreground">
-                    {t('preview.moreRows').replace('{count}', String(rows.length - 50))}
+                    {tr('preview.moreRows', { count: rows.length - 50 })}
                   </div>
                 )}
               </div>
             )}
 
             {rows.length > 0 && (
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 <Button onClick={handleDownload}>
-                  {t('export.download')}
+                  {tr('export.download')}
                 </Button>
                 <Button onClick={handleImportClick} disabled={isImporting || !selectedAccountId}>
-                  {isImporting ? 'Importing...' : 'Import to account'}
+                  {isImporting ? tr('import.importing') : tr('import.button')}
                 </Button>
-                {validation.valid > 0 && <Badge variant="success">{validation.valid} {t('validation.valid')}</Badge>}
-                {validation.warning > 0 && <Badge variant="warning">{validation.warning} {t('validation.warning')}</Badge>}
-                {validation.error > 0 && <Badge variant="destructive">{validation.error} {t('validation.error')}</Badge>}
+                {validation.valid > 0 && <Badge variant="success">{validation.valid} {tr('validation.valid')}</Badge>}
+                {validation.warning > 0 && <Badge variant="warning">{validation.warning} {tr('validation.warning')}</Badge>}
+                {validation.error > 0 && <Badge variant="destructive">{validation.error} {tr('validation.error')}</Badge>}
               </div>
             )}
 
             {statusMessage && (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <div className={`rounded-md border px-3 py-2 text-sm ${statusClass}`}>
                 {statusMessage}
               </div>
             )}
@@ -477,22 +528,23 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>{mode === 'initial' ? 'Confirm initial import' : 'Confirm update import'}</AlertDialogTitle>
+                  <AlertDialogTitle>{mode === 'initial' ? tr('import.confirm.initial.title') : tr('import.confirm.update.title')}</AlertDialogTitle>
                   <AlertDialogDescription>
                     {mode === 'initial'
-                      ? 'This will delete all existing activities in the selected account and import the converted records. Continue?'
-                      : 'This will import ' + convertedTransactions.length + ' new records into the selected account. Existing activities will remain unchanged. Continue?'}
+                      ? tr('import.confirm.initial.description', { count: convertedTransactions.length })
+                      : tr('import.confirm.update.description', { count: convertedTransactions.length })}
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={performImport}>Import</AlertDialogAction>
+                  <AlertDialogCancel>{tr('import.confirm.cancel')}</AlertDialogCancel>
+                  <AlertDialogAction onClick={performImport}>{tr('import.confirm.action')}</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
-          <div className="flex justify-end">
-            <Button variant="outline" onClick={startOver}>Start over</Button>
-          </div>
+
+            <div className="flex justify-end">
+              <Button variant="outline" onClick={startOver}>{tr('startOver')}</Button>
+            </div>
           </CardContent>
         </Card>
       </PageContent>
