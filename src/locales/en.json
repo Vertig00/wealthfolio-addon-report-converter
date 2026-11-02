@@ -70,5 +70,9 @@
   "action.convert": "Convert",
   "search.placeholder": "Search...",
   "source.empty": "No sources found",
-  "status.converted": "Converted {count} records"
+  "status.converted": "Converted {count} records",
+  "advanced.label": "Advanced",
+  "advanced.description": "Show raw source data before conversion.",
+  "raw.title": "Raw data",
+  "converted.title": "Converted data"
 }

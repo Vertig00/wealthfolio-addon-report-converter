@@ -27,6 +27,7 @@ import {
   Badge,
   EmptyPlaceholder,
   Skeleton,
+  Switch,
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -57,8 +58,11 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
   const [isLoading, setIsLoading] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [validation, setValidation] = useState<{ valid: number; warning: number; error: number }>({ valid: 0, warning: 0, error: 0 });
-  const [rows, setRows] = useState<any[]>([]);
-  const [headers, setHeaders] = useState<string[]>([]);
+  const [rawRows, setRawRows] = useState<any[]>([]);
+  const [rawHeaders, setRawHeaders] = useState<string[]>([]);
+  const [convertedRows, setConvertedRows] = useState<any[]>([]);
+  const [convertedHeaders, setConvertedHeaders] = useState<string[]>([]);
+  const [advanced, setAdvanced] = useState<boolean>(false);
   const [wealthfolioCsv, setWealthfolioCsv] = useState<string>('');
   const [convertedTransactions, setConvertedTransactions] = useState<any[]>([]);
   const [importSummary, setImportSummary] = useState<string>('');
@@ -79,6 +83,18 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
     }).catch(() => undefined);
   }, [storage]);
 
+  useEffect(() => {
+    if (!storage) return;
+    storage.get('ui.advanced').then((value: string | null) => {
+      if (value === 'true') setAdvanced(true);
+    }).catch(() => undefined);
+  }, [storage]);
+
+  const handleAdvancedChange = (value: boolean) => {
+    setAdvanced(value);
+    storage?.set('ui.advanced', String(value)).catch(() => undefined);
+  };
+
   const handleLanguageChange = (value: string) => {
     const next = value === 'pl' ? 'pl' : 'en';
     setLanguage(next);
@@ -88,13 +104,13 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
   useEffect(() => {
     let valid = 0;
     let errorCount = 0;
-    for (const row of rows) {
+    for (const row of convertedRows) {
       const hasData = Object.values(row).some(v => v != null && v !== '');
       if (hasData) valid++;
       else errorCount++;
     }
     setValidation({ valid, warning: 0, error: errorCount });
-  }, [rows]);
+  }, [convertedRows]);
 
   useEffect(() => {
     if (!accounts) return;
@@ -105,8 +121,10 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
   }, [accounts]);
 
   const resetResults = () => {
-    setRows([]);
-    setHeaders([]);
+    setRawRows([]);
+    setRawHeaders([]);
+    setConvertedRows([]);
+    setConvertedHeaders([]);
     setWealthfolioCsv('');
     setConvertedTransactions([]);
     setImportSummary('');
@@ -128,9 +146,40 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
     setFile(selected);
     resetResults();
     const name = selected.name.toLowerCase();
-    if (name.endsWith('.xlsx')) {
+    if (name.endsWith('.csv')) {
+      try {
+        const csvResult = await readCSVFile(selected);
+        if (!csvResult.errors || csvResult.errors.length === 0) {
+          setRawHeaders(csvResult.headers || []);
+          setRawRows(csvResult.rows || []);
+        }
+      } catch {
+        // Keep raw preview empty if reading fails.
+      }
+    } else if (name.endsWith('.xlsx')) {
       try {
         const xlsxResult = await readXLSXFile(selected);
+        if (!xlsxResult.error && xlsxResult.sheets && xlsxResult.sheets.length > 0) {
+          const cashSheet = xlsxResult.sheets.find((sh: any) => sh.name === 'Cash Operations');
+          const sheet = cashSheet || xlsxResult.sheets[0];
+          if (sheet && Array.isArray(sheet.rows) && sheet.rows.length > 0) {
+            const isCash = sheet.name === 'Cash Operations';
+            const headerIndex = isCash && sheet.rows.length >= 5 ? 4 : 0;
+            const rawHeadersRow = sheet.rows[headerIndex] || [];
+            let lastHeader = rawHeadersRow.length - 1;
+            while (lastHeader >= 0 && (rawHeadersRow[lastHeader] === '' || rawHeadersRow[lastHeader] == null)) lastHeader -= 1;
+            const headers = rawHeadersRow.slice(0, lastHeader + 1);
+            const dataRows = sheet.rows.slice(headerIndex + 1).map((row: any[]) => {
+              const obj: Record<string, any> = {};
+              headers.forEach((header: any, index: number) => {
+                obj[String(header ?? index)] = index < row.length ? row[index] : '';
+              });
+              return obj;
+            });
+            setRawHeaders(headers);
+            setRawRows(dataRows);
+          }
+        }
         const cashSheet = xlsxResult.sheets.find((sh: any) => sh.name === 'Cash Operations');
         if (cashSheet && cashSheet.rows.length >= 4) {
           const fromSerial = Number(cashSheet.rows[2][1]);
@@ -155,7 +204,13 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
   const handleConvert = async () => {
     if (!file) return;
     setIsLoading(true);
-    resetResults();
+    setConvertedRows([]);
+    setConvertedHeaders([]);
+    setWealthfolioCsv('');
+    setConvertedTransactions([]);
+    setImportSummary('');
+    setStatus('', 'info');
+    setValidation({ valid: 0, warning: 0, error: 0 });
     const name = file.name.toLowerCase();
     try {
       if (name.endsWith('.csv')) {
@@ -164,8 +219,8 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
           setValidation({ valid: 0, warning: 0, error: csvResult.errors.length });
           setStatus(tr('error.invalidCSV'), 'error');
         } else {
-          setHeaders(csvResult.headers);
-          setRows(csvResult.rows);
+          setConvertedHeaders(csvResult.headers);
+          setConvertedRows(csvResult.rows);
           setStatus(tr('status.converted', { count: csvResult.rows.length }), 'success');
         }
       } else if (name.endsWith('.xlsx')) {
@@ -247,8 +302,8 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
               });
               return row;
             });
-            setHeaders(wfHeaders);
-            setRows(wfRows);
+            setConvertedHeaders(wfHeaders);
+            setConvertedRows(wfRows);
             setStatus(tr('status.converted', { count: wfRows.length }), 'success');
             setWealthfolioCsv(csvText);
             setConvertedTransactions(selectedTransactions);
@@ -266,8 +321,8 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             setStatus(tr('error.invalidXLSX'), 'error');
           } else {
             const first = xlsxResult.sheets[0];
-            setHeaders(first.rows[0] || []);
-            setRows(first.rows.slice(1));
+            setConvertedHeaders(first.rows[0] || []);
+            setConvertedRows(first.rows.slice(1));
             setStatus(tr('status.converted', { count: Math.max(0, (first.rows || []).length - 1) }), 'success');
           }
         }
@@ -283,12 +338,12 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
   };
 
   const handleDownload = async () => {
-    if (rows.length === 0 && !wealthfolioCsv) {
+    if (convertedRows.length === 0 && !wealthfolioCsv) {
       setStatus(tr('error.emptyFile'), 'error');
       return;
     }
     try {
-      const csvContent = wealthfolioCsv || rows.map((row: any) => Object.values(row).map(v => String(v ?? '').includes(',') ? `"${String(v ?? '')}"` : String(v ?? '')).join(',')).join('\n');
+      const csvContent = wealthfolioCsv || convertedRows.map((row: any) => Object.values(row).map(v => String(v ?? '').includes(',') ? `"${String(v ?? '')}"` : String(v ?? '')).join(',')).join('\n');
       await files.openSaveDialog(csvContent, source + '_wealthfolio.csv');
     } catch (e) {
       setStatus(tr('export.error') + ': ' + (e instanceof Error ? e.message : String(e)), 'error');
@@ -464,42 +519,84 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
 
             {isLoading && <Skeleton className="h-6 w-32" />}
 
-            {!isLoading && rows.length === 0 && (
+            <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2">
+              <div className="space-y-0.5">
+                <label className="text-sm font-medium">{tr('advanced.label')}</label>
+                <p className="text-xs text-muted-foreground">{tr('advanced.description')}</p>
+              </div>
+              <Switch checked={advanced} onCheckedChange={handleAdvancedChange} />
+            </div>
+
+            {!isLoading && convertedRows.length === 0 && rawRows.length === 0 && (
               <EmptyPlaceholder
                 title={tr('emptyState.title')}
                 description={tr('emptyState.description')}
               />
             )}
 
-            {rows.length > 0 && (
-              <div className="overflow-x-auto rounded-md border border-border max-h-[420px]">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      {headers.map((h, i) => (
-                        <TableHead key={i} className="whitespace-nowrap">{h}</TableHead>
-                      ))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rows.slice(0, 50).map((row, idx) => (
-                      <TableRow key={idx}>
-                        {headers.map((h, i) => (
-                          <TableCell key={i} className="max-w-xs truncate">{row[h] ?? ''}</TableCell>
+            {advanced && rawRows.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium">{tr('raw.title')}</h3>
+                <div className="overflow-auto rounded-md border border-border max-h-[420px]">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {rawHeaders.map((h, i) => (
+                          <TableHead key={i} className="whitespace-nowrap">{h}</TableHead>
                         ))}
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                {rows.length > 50 && (
-                  <div className="px-4 py-2 text-sm text-muted-foreground">
-                    {tr('preview.moreRows', { count: rows.length - 50 })}
-                  </div>
-                )}
+                    </TableHeader>
+                    <TableBody>
+                      {rawRows.slice(0, 100).map((row, idx) => (
+                        <TableRow key={idx}>
+                          {rawHeaders.map((h, i) => (
+                            <TableCell key={i} className="max-w-xs truncate">{row[h] ?? ''}</TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                  {rawRows.length > 100 && (
+                    <div className="px-4 py-2 text-sm text-muted-foreground">
+                      {tr('preview.moreRows', { count: rawRows.length - 100 })}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
-            {rows.length > 0 && (
+            {convertedRows.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium">{tr('converted.title')}</h3>
+                <div className="overflow-auto rounded-md border border-border max-h-[420px]">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {convertedHeaders.map((h, i) => (
+                          <TableHead key={i} className="whitespace-nowrap">{h}</TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {convertedRows.slice(0, 100).map((row, idx) => (
+                        <TableRow key={idx}>
+                          {convertedHeaders.map((h, i) => (
+                            <TableCell key={i} className="max-w-xs truncate">{row[h] ?? ''}</TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                  {convertedRows.length > 100 && (
+                    <div className="px-4 py-2 text-sm text-muted-foreground">
+                      {tr('preview.moreRows', { count: convertedRows.length - 100 })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {convertedRows.length > 0 && (
               <div className="flex flex-wrap items-center gap-3">
                 <Button onClick={handleDownload}>
                   {tr('export.download')}

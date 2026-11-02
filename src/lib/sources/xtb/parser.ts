@@ -8,7 +8,13 @@ const OPERATION_MAP: Record<string, OperationType> = {
   'IKE deposit': 'DEPOSIT',
   'Deposit': 'DEPOSIT',
   'Free funds interest': 'INTEREST',
+  'Free funds interest tax': 'TAX_WITHHOLDING',
   'Dividend': 'DIVIDEND',
+  'Withholding tax': 'TAX_WITHHOLDING',
+  'Transfer': 'TRANSFER',
+  'Subaccount transfer': 'TRANSFER',
+  'Swap': 'FEE',
+  'Commission': 'FEE',
 };
 
 function parseDate(raw: any): Date {
@@ -34,9 +40,12 @@ function parseNumber(raw: any): number {
 }
 
 function determineCurrency(ticker: string, operationType: OperationType): string {
-  if (operationType === 'DEPOSIT' || operationType === 'WITHDRAWAL') return 'PLN';
+  if (operationType === 'DEPOSIT' || operationType === 'WITHDRAWAL' || operationType === 'TRANSFER' || operationType === 'INTEREST' || operationType === 'FEE' || operationType === 'TAX_WITHHOLDING') {
+    if (!ticker) return 'PLN';
+  }
   if (ticker.endsWith('.PL')) return 'PLN';
-  if (ticker.endsWith('.UK') || ticker.endsWith('.DE') || ticker.endsWith('.FR')) return 'USD';
+  if (ticker.endsWith('.US') || ticker.endsWith('.UK')) return 'USD';
+  if (ticker.endsWith('.DE') || ticker.endsWith('.FR') || ticker.endsWith('.NL')) return 'EUR';
   return 'PLN';
 }
 
@@ -44,6 +53,12 @@ function mapSymbol(ticker: string): string {
   if (ticker.endsWith('.PL')) return ticker.slice(0, -3) + '.WA';
   if (ticker.endsWith('.UK')) return ticker.slice(0, -3) + '.L';
   return ticker;
+}
+
+function toWealthfolioActivityType(operationType: OperationType, amount?: number): string {
+  if (operationType === 'TAX_WITHHOLDING') return 'TAX';
+  if (operationType === 'TRANSFER') return (amount ?? 0) >= 0 ? 'TRANSFER_IN' : 'TRANSFER_OUT';
+  return operationType;
 }
 
 function determineFXRate(currency: string, operationType: OperationType): number | undefined {
@@ -67,7 +82,7 @@ function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number 
   const isCashOperation = tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || String(tx.ticker || '').startsWith('$CASH');
   const instrumentType = isCashOperation ? '' : (category === 'ETF' ? 'ETF' : 'EQUITY');
   let qty = '';
-  let act = tx.operationType;
+  const act = toWealthfolioActivityType(tx.operationType, tx.amount);
   let uPrice = '';
   const curr = tx.currency;
   const feeVal = String(fee);
@@ -113,7 +128,7 @@ export function toActivityImport(tx: TransactionRecord, accountId: string): Acti
   const isCash = tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || String(tx.ticker || '').startsWith('$CASH');
   return {
     accountId,
-    activityType: tx.operationType,
+    activityType: toWealthfolioActivityType(tx.operationType, tx.amount) as any,
     date: tx.date,
     symbol: mapSymbol(tx.ticker || ''),
     instrumentType: isCash ? undefined : (category === 'ETF' ? 'ETF' : 'EQUITY'),
@@ -124,6 +139,7 @@ export function toActivityImport(tx: TransactionRecord, accountId: string): Acti
     tax: 0,
     amount: tx.operationType === 'BUY' || tx.operationType === 'SELL' ? undefined : tx.amount,
     fxRate: tx.currency === 'USD' && (tx.operationType === 'BUY' || tx.operationType === 'SELL') ? 3.87 : undefined,
+    quoteMode: 'MANUAL',
     comment: tx.description,
     sourceSystem: 'XTB',
     sourceRecordId: tx.id,

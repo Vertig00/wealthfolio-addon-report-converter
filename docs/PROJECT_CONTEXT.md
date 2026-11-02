@@ -35,3 +35,26 @@
 ## Release
 
 - v0.1.0 published: https://github.com/Vertig00/wealthfolio-addon-report-converter/releases/tag/v0.1.0
+
+## XTB PLN sample analysis (2026-11-02)
+
+Files analyzed locally (not committed):
+- `local-samples/xtb/PLN_2588063_2006-01-01_2026-09-29-ALL.xlsx`
+- `local-samples/xtb/PLN_2588063_2026-08-01_2026-11-02-UPDATE.xlsx`
+
+Verified facts:
+- Workbook layout matches known XTB variant: `Closed Positions`, `Cash Operations`, `Open Positions`.
+- Cash Operations header row index 4, data from row index 5.
+- Cash Operations columns: Type, Instrument, Ticker, Category, Time, Amount, ID, Comment, Product, Position ID.
+- Ticker suffixes found: DE (535), UK (176), PL (194), US (137), NL (17), FR (5).
+- ALL report: 1705 unique operation IDs. UPDATE report: 729 unique IDs, 504 overlapping with ALL, 225 update-only.
+- Supported operation types already mapped: Stock purchase, Stock sell, Deposit, Free funds interest, Dividend.
+- Additional operation types found: Subaccount transfer, Transfer, Withholding tax, Free funds interest tax, Close trade, Swap, Fractional shares, Commission, Correction.
+- Products include `My Trades` and `Investment Plans`.
+- Dividend comments use `SHR` per-share notation; withholding tax comments use `WHT %`.
+- Buy/sell comments use both `OPEN BUY ... qty/total @ price` and `CLOSE BUY ... qty/total @ price`.
+
+Open questions:
+- Whether Subaccount transfer/Transfer should become Wealthfolio transfer activities or be skipped.
+- Currency mapping for DE/FR/NL (likely EUR) and UK (likely USD for observed ETFs) needs verification against Wealthfolio import validation.
+- Handling of Close trade, Swap, Fractional shares, Commission, and Correction rows needs product decisions.

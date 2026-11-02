@@ -70,5 +70,9 @@
   "action.convert": "Konwertuj",
   "search.placeholder": "Szukaj...",
   "source.empty": "Nie znaleziono źródeł",
-  "status.converted": "Skonwertowano {count} rekordów"
+  "status.converted": "Skonwertowano {count} rekordów",
+  "advanced.label": "Zaawansowane",
+  "advanced.description": "Pokaż surowe dane źródłowe przed konwersją.",
+  "raw.title": "Dane surowe",
+  "converted.title": "Dane skonwertowane"
 }
