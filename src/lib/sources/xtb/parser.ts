@@ -43,15 +43,18 @@ function determineCurrency(ticker: string, operationType: OperationType): string
   if (operationType === 'DEPOSIT' || operationType === 'WITHDRAWAL' || operationType === 'TRANSFER' || operationType === 'INTEREST' || operationType === 'FEE' || operationType === 'TAX_WITHHOLDING') {
     if (!ticker) return 'PLN';
   }
-  if (ticker.endsWith('.PL')) return 'PLN';
-  if (ticker.endsWith('.US') || ticker.endsWith('.UK')) return 'USD';
-  if (ticker.endsWith('.DE') || ticker.endsWith('.FR') || ticker.endsWith('.NL')) return 'EUR';
+  if (ticker.endsWith('.PL') || ticker.endsWith('.WA')) return 'PLN';
+  if (ticker.endsWith('.US') || ticker.endsWith('.UK') || ticker.endsWith('.L')) return 'USD';
+  if (ticker.endsWith('.DE') || ticker.endsWith('.NL') || ticker.endsWith('.FR') || ticker.endsWith('.AS') || ticker.endsWith('.PA')) return 'EUR';
   return 'PLN';
 }
 
 function mapSymbol(ticker: string): string {
   if (ticker.endsWith('.PL')) return ticker.slice(0, -3) + '.WA';
   if (ticker.endsWith('.UK')) return ticker.slice(0, -3) + '.L';
+  if (ticker.endsWith('.NL')) return ticker.slice(0, -3) + '.AS';
+  if (ticker.endsWith('.FR')) return ticker.slice(0, -3) + '.PA';
+  if (ticker.endsWith('.US')) return ticker.slice(0, -3);
   return ticker;
 }
 
@@ -112,8 +115,7 @@ function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number 
 export function buildWealthfolioCsv(transactions: TransactionRecord[]): string {
   const rows: string[] = ['date,symbol,instrumentType,quantity,activityType,unitPrice,currency,fee,tax,amount,fxRate,subtype,comment'];
   for (const tx of transactions) {
-    const fxRate = determineFXRate(tx.currency, tx.operationType);
-    rows.push(buildWealthfolioRow(tx, 0, fxRate));
+    rows.push(buildWealthfolioRow(tx, 0, tx.fxRate ?? determineFXRate(tx.currency, tx.operationType)));
   }
   return rows.join('\n');
 }
@@ -122,6 +124,9 @@ export function toActivityImport(tx: TransactionRecord, accountId: string): Acti
   const mapSymbol = (ticker: string): string => {
     if (ticker.endsWith('.PL')) return ticker.slice(0, -3) + '.WA';
     if (ticker.endsWith('.UK')) return ticker.slice(0, -3) + '.L';
+    if (ticker.endsWith('.NL')) return ticker.slice(0, -3) + '.AS';
+    if (ticker.endsWith('.FR')) return ticker.slice(0, -3) + '.PA';
+    if (ticker.endsWith('.US')) return ticker.slice(0, -3);
     return ticker;
   };
   const category = String((tx.metadata as any)?.category || '').trim().toUpperCase();
@@ -137,12 +142,13 @@ export function toActivityImport(tx: TransactionRecord, accountId: string): Acti
     currency: tx.currency,
     fee: 0,
     tax: 0,
-    amount: tx.operationType === 'BUY' || tx.operationType === 'SELL' ? undefined : tx.amount,
-    fxRate: tx.currency === 'USD' && (tx.operationType === 'BUY' || tx.operationType === 'SELL') ? 3.87 : undefined,
-    quoteMode: 'MANUAL',
+    amount: tx.operationType === 'BUY' || tx.operationType === 'SELL' ? (tx.quantity || 0) * (tx.price || 0) : tx.amount,
+    fxRate: tx.fxRate ?? (tx.currency === 'USD' && (tx.operationType === 'BUY' || tx.operationType === 'SELL') ? 3.87 : undefined),
+    quoteMode: 'MARKET',
     comment: tx.description,
     sourceSystem: 'XTB',
     sourceRecordId: tx.id,
+    forceImport: true,
     isValid: true,
     isDraft: false,
   } as unknown as ActivityImport;
@@ -171,7 +177,7 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
       const openSheet = sheets.find((sh: any) => sh.name === 'Open Positions');
       const closedSheet = sheets.find((sh: any) => sh.name === 'Closed Positions');
 
-      const positionMap: Record<string, { ticker: string; category: string }> = {};
+      const positionMap: Record<string, { ticker: string; category: string; openFx?: number; closeFx?: number }> = {};
       if (openSheet?.rows) {
         for (const r of openSheet.rows) {
           if (!r || r.length < 3) continue;
@@ -197,8 +203,15 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
           const ticker = String(r[1] || '').trim();
           const category = String(r[2] || '').trim();
           const posId = String(r[23] || '').trim();
+          const openFx = parseNumber(r[20]);
+          const closeFx = parseNumber(r[21]);
           if (posId && ticker) {
-            positionMap[posId] = { ticker, category: category || positionMap[posId]?.category || '' };
+            positionMap[posId] = {
+              ticker,
+              category: category || positionMap[posId]?.category || '',
+              openFx: openFx > 0 ? openFx : positionMap[posId]?.openFx,
+              closeFx: closeFx > 0 ? closeFx : positionMap[posId]?.closeFx,
+            };
           }
         }
       }
@@ -258,6 +271,19 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
 
         const currency = determineCurrency(ticker, operationType);
 
+        const positionFx = positionId && positionMap[positionId] ? positionMap[positionId] : undefined;
+        let fxRate = operationType === 'BUY'
+          ? (positionFx?.openFx ?? undefined)
+          : operationType === 'SELL'
+            ? (positionFx?.closeFx ?? positionFx?.openFx ?? undefined)
+            : undefined;
+        if ((operationType === 'BUY' || operationType === 'SELL') && fxRate == null) {
+          const qtyPrice = (quantity || 0) * (price || 0);
+          if (qtyPrice > 0 && Math.abs(amount) > 0) {
+            fxRate = Math.abs(amount) / qtyPrice;
+          }
+        }
+
         const tx: any = {
           id: id || `${operationType}-${i}`,
           sourceRow: i + 1,
@@ -267,6 +293,7 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
           quantity,
           price,
           amount: operationType === 'BUY' || operationType === 'SELL' ? Math.abs(amount) : amount,
+          fxRate,
           description: comment,
           ticker,
           isin: undefined,

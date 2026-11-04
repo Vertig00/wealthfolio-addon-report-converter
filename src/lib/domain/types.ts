@@ -19,6 +19,7 @@ export interface Transaction {
   quantity?: number;
   price?: number;
   amount?: number; // net amount in base currency
+  fxRate?: number;
   description?: string;
   ticker?: string;
   isin?: string;

@@ -245,6 +245,9 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
                 const mapSymbol = (ticker: string) => {
                   if (ticker.endsWith('.PL')) return ticker.slice(0, -3) + '.WA';
                   if (ticker.endsWith('.UK')) return ticker.slice(0, -3) + '.L';
+                  if (ticker.endsWith('.NL')) return ticker.slice(0, -3) + '.AS';
+                  if (ticker.endsWith('.FR')) return ticker.slice(0, -3) + '.PA';
+                  if (ticker.endsWith('.US')) return ticker.slice(0, -3);
                   return ticker;
                 };
                 const isCashTx = (tx: any) => tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || String(tx.ticker || '').startsWith('$CASH');
@@ -254,7 +257,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
                   const curr = tx.currency;
                   if (isCashTx(tx)) return `CASH|${tx.operationType}|${date}|${amt}|${curr}`;
                   const symbol = mapSymbol(String(tx.ticker || ''));
-                  const baseSymbol = symbol.replace(/\.(WA|L|DE|FR)$/i, '');
+                  const baseSymbol = symbol.replace(/\.(WA|L|DE|FR|AS|PA)$/i, '');
                   const qty = norm(tx.quantity);
                   return `TRADE|${tx.operationType}|${date}|${baseSymbol}|${qty}|${curr}`;
                 };
@@ -265,7 +268,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
                   const curr = a.currency;
                   if (isCashActivity(a)) return `CASH|${a.activityType}|${date}|${amt}|${curr}`;
                   const qty = norm(a.quantity);
-                  const baseAssetSymbol = String(a.assetSymbol || '').replace(/\.(WA|L|DE|FR)$/i, '');
+                  const baseAssetSymbol = String(a.assetSymbol || '').replace(/\.(WA|L|DE|FR|AS|PA)$/i, '');
                   return `TRADE|${a.activityType}|${date}|${baseAssetSymbol}|${qty}|${curr}`;
                 };
                 const activityKeys = (existingActivities).map((a: any) => activityKey(a));
