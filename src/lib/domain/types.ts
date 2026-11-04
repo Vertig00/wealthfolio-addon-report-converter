@@ -20,6 +20,8 @@ export interface Transaction {
   price?: number;
   amount?: number; // net amount in base currency
   fxRate?: number;
+  fxRateSource?: 'closed-positions' | 'cash-operations' | 'none';
+  fxRateStatus?: 'verified' | 'estimated' | 'missing';
   description?: string;
   ticker?: string;
   isin?: string;

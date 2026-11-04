@@ -115,7 +115,7 @@ function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number 
 export function buildWealthfolioCsv(transactions: TransactionRecord[]): string {
   const rows: string[] = ['date,symbol,instrumentType,quantity,activityType,unitPrice,currency,fee,tax,amount,fxRate,subtype,comment'];
   for (const tx of transactions) {
-    rows.push(buildWealthfolioRow(tx, 0, tx.fxRate ?? determineFXRate(tx.currency, tx.operationType)));
+    rows.push(buildWealthfolioRow(tx, 0, tx.fxRate));
   }
   return rows.join('\n');
 }
@@ -143,7 +143,7 @@ export function toActivityImport(tx: TransactionRecord, accountId: string): Acti
     fee: 0,
     tax: 0,
     amount: tx.operationType === 'BUY' || tx.operationType === 'SELL' ? (tx.quantity || 0) * (tx.price || 0) : tx.amount,
-    fxRate: tx.fxRate ?? (tx.currency === 'USD' && (tx.operationType === 'BUY' || tx.operationType === 'SELL') ? 3.87 : undefined),
+    fxRate: tx.fxRate,
     quoteMode: 'MARKET',
     comment: tx.description,
     sourceSystem: 'XTB',
@@ -217,6 +217,29 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
       }
 
       const rows = cashSheet.rows;
+      const derivedFxAccum = new Map<string, { amount: number; qtyPrice: number }>();
+      for (let i = 5; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length < 5) continue;
+        const type = String(row[0] || '').trim();
+        if (type !== 'Stock purchase' && type !== 'Stock sell') continue;
+        const posId = String(row[9] || '').trim();
+        if (!posId) continue;
+        const comment = String(row[7] || '').trim();
+        const parsed = parseQuantityAndPrice(comment);
+        const qtyPrice = (parsed.quantity || 0) * (parsed.price || 0);
+        const amount = Math.abs(parseNumber(row[5]));
+        if (qtyPrice <= 0 || amount <= 0) continue;
+        const acc = derivedFxAccum.get(posId) || { amount: 0, qtyPrice: 0 };
+        acc.amount += amount;
+        acc.qtyPrice += qtyPrice;
+        derivedFxAccum.set(posId, acc);
+      }
+      const derivedFxByPosition = new Map<string, number>();
+      derivedFxAccum.forEach((acc, posId) => {
+        if (acc.qtyPrice > 0) derivedFxByPosition.set(posId, acc.amount / acc.qtyPrice);
+      });
+
       if (!rows || rows.length < 5) {
         resolve({ transactions: [], wealthfolioCsv: '', error: 'No data rows in Cash Operations sheet' });
         return;
@@ -272,16 +295,42 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
         const currency = determineCurrency(ticker, operationType);
 
         const positionFx = positionId && positionMap[positionId] ? positionMap[positionId] : undefined;
-        let fxRate = operationType === 'BUY'
-          ? (positionFx?.openFx ?? undefined)
-          : operationType === 'SELL'
-            ? (positionFx?.closeFx ?? positionFx?.openFx ?? undefined)
-            : undefined;
-        if ((operationType === 'BUY' || operationType === 'SELL') && fxRate == null) {
-          const qtyPrice = (quantity || 0) * (price || 0);
-          if (qtyPrice > 0 && Math.abs(amount) > 0) {
-            fxRate = Math.abs(amount) / qtyPrice;
+        let fxRate: number | undefined;
+        let fxRateSource: 'closed-positions' | 'cash-operations' | 'none' = 'none';
+        let fxRateStatus: 'verified' | 'estimated' | 'missing' = 'missing';
+        if (operationType === 'BUY' || operationType === 'SELL') {
+          if (operationType === 'BUY' && positionFx?.openFx) {
+            fxRate = positionFx.openFx;
+            fxRateSource = 'closed-positions';
+            fxRateStatus = 'verified';
+          } else if (operationType === 'SELL' && positionFx?.closeFx) {
+            fxRate = positionFx.closeFx;
+            fxRateSource = 'closed-positions';
+            fxRateStatus = 'verified';
+          } else if (operationType === 'SELL' && positionFx?.openFx) {
+            fxRate = positionFx.openFx;
+            fxRateSource = 'closed-positions';
+            fxRateStatus = 'verified';
+          } else if (derivedFxByPosition.has(positionId)) {
+            fxRate = derivedFxByPosition.get(positionId);
+            fxRateSource = 'cash-operations';
+            fxRateStatus = 'estimated';
+          } else {
+            const qtyPrice = (quantity || 0) * (price || 0);
+            const amt = Math.abs(amount);
+            if (qtyPrice > 0 && amt > 0) {
+              fxRate = amt / qtyPrice;
+              fxRateSource = 'cash-operations';
+              fxRateStatus = 'estimated';
+            }
           }
+          if (fxRate == null && currency === 'PLN') {
+            fxRateStatus = 'verified';
+            fxRateSource = 'none';
+          }
+        } else if (currency === 'PLN') {
+          fxRateStatus = 'verified';
+          fxRateSource = 'none';
         }
 
         const tx: any = {
@@ -294,6 +343,8 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
           price,
           amount: operationType === 'BUY' || operationType === 'SELL' ? Math.abs(amount) : amount,
           fxRate,
+          fxRateSource,
+          fxRateStatus,
           description: comment,
           ticker,
           isin: undefined,
