@@ -60,6 +60,13 @@
         "checkImport"
       ],
       "purpose": "Read and import transaction activities"
+    },
+    {
+      "category": "market-data",
+      "functions": [
+        "searchTicker"
+      ],
+      "purpose": "Resolve renamed ticker symbols through Wealthfolio market search"
     }
   ],
   "keywords": [

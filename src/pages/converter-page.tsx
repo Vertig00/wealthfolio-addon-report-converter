@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { readXLSXFile, readCSVFile } from '../lib/file-readers';
-import { parseXTBReport, buildWealthfolioCsv, toActivityImport } from '../lib/sources/xtb';
+import { parseXTBReport, buildWealthfolioCsv, toActivityImport, mapXTBSymbol, getWealthfolioSymbol } from '../lib/sources/xtb';
+import { applyTickerResolutions, resolveTickerCandidates } from '../lib/market/ticker-resolver';
+import type { TickerLookupInput } from '../lib/market/ticker-resolver';
 import { SearchableIconSelect } from '../components/searchable-icon-select';
 import { TrendingUp, Wallet, CreditCard, Bitcoin, Building2 } from 'lucide-react';
 import {
@@ -46,7 +48,14 @@ function formatDate(d: any): string {
   return String(d);
 }
 
-export function ConverterPage({ t, files, storage, accounts, activities, navigation }: { t: Translate; files: any; storage: any; accounts: any; activities: any; navigation: any }) {
+interface TickerResolutionView {
+  checked: number;
+  changes: Array<{ from: string; to: string }>;
+  unresolved: string[];
+  error?: string;
+}
+
+export function ConverterPage({ t, files, storage, accounts, activities, market, navigation }: { t: Translate; files: any; storage: any; accounts: any; activities: any; market?: any; navigation: any }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [language, setLanguage] = useState<'en' | 'pl'>('en');
   const [accountList, setAccountList] = useState<any[]>([]);
@@ -68,6 +77,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
   const [importSummary, setImportSummary] = useState<string>('');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [statusType, setStatusType] = useState<'info' | 'success' | 'warning' | 'error'>('info');
+  const [tickerResolution, setTickerResolution] = useState<TickerResolutionView | null>(null);
   const setStatus = (message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
     setStatusMessage(message);
     setStatusType(type);
@@ -130,6 +140,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
     setImportSummary('');
     setStatus('');
     setStatusType('info');
+    setTickerResolution(null);
     setValidation({ valid: 0, warning: 0, error: 0 });
   };
 
@@ -210,6 +221,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
     setConvertedTransactions([]);
     setImportSummary('');
     setStatus('', 'info');
+    setTickerResolution(null);
     setValidation({ valid: 0, warning: 0, error: 0 });
     const name = file.name.toLowerCase();
     try {
@@ -230,7 +242,49 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             setValidation({ valid: 0, warning: 0, error: 1 });
             setStatus(xtbResult.error, 'error');
           } else {
-            const reportTransactions = xtbResult.transactions || [];
+            const parsedTransactions = xtbResult.transactions || [];
+            let reportTransactions = parsedTransactions;
+
+            if (market?.searchTicker && parsedTransactions.length > 0) {
+              const inputsByTicker = new Map<string, TickerLookupInput>();
+              for (const tx of parsedTransactions) {
+                const ticker = String(tx.ticker || '').trim();
+                if (!ticker || ticker.startsWith('$CASH') || inputsByTicker.has(ticker)) continue;
+                inputsByTicker.set(ticker, {
+                  ticker,
+                  fallbackSymbol: mapXTBSymbol(ticker),
+                  instrumentName: typeof tx.metadata?.instrument === 'string' ? tx.metadata.instrument : undefined,
+                  isin: tx.isin,
+                  expectedCurrency: tx.currency,
+                });
+              }
+
+              if (inputsByTicker.size > 0) {
+                try {
+                  const resolution = await resolveTickerCandidates(
+                    Array.from(inputsByTicker.values()),
+                    (query: string) => market.searchTicker(query),
+                  );
+                  reportTransactions = applyTickerResolutions(parsedTransactions, resolution.byTicker);
+                  setTickerResolution({
+                    checked: resolution.checked,
+                    changes: resolution.changes.map((item) => ({ from: item.requestedTicker, to: item.symbol })),
+                    unresolved: [...resolution.ambiguous, ...resolution.notFound, ...resolution.failed].map((item) => item.requestedTicker),
+                    error: resolution.failed.length > 0
+                      ? tr('tickerResolution.searchFailed', { count: resolution.failed.length })
+                      : undefined,
+                  });
+                } catch (error) {
+                  setTickerResolution({
+                    checked: inputsByTicker.size,
+                    changes: [],
+                    unresolved: [],
+                    error: tr('tickerResolution.error', { message: error instanceof Error ? error.message : String(error) }),
+                  });
+                }
+              }
+            }
+
             let selectedTransactions = reportTransactions;
             let existingActivities: any[] = [];
             if (mode === 'update' && activities && selectedAccountId) {
@@ -242,21 +296,14 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
                   const n = Number(v);
                   return isNaN(n) ? String(v ?? '') : n.toFixed(6);
                 };
-                const mapSymbol = (ticker: string) => {
-                  if (ticker.endsWith('.PL')) return ticker.slice(0, -3) + '.WA';
-                  if (ticker.endsWith('.UK')) return ticker.slice(0, -3) + '.L';
-                  if (ticker.endsWith('.NL')) return ticker.slice(0, -3) + '.AS';
-                  if (ticker.endsWith('.FR')) return ticker.slice(0, -3) + '.PA';
-                  if (ticker.endsWith('.US')) return ticker.slice(0, -3);
-                  return ticker;
-                };
+                const mapSymbol = getWealthfolioSymbol;
                 const isCashTx = (tx: any) => tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || String(tx.ticker || '').startsWith('$CASH');
                 const txKey = (tx: any) => {
                   const date = tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date).split('T')[0];
                   const amt = norm(tx.amount);
                   const curr = tx.currency;
                   if (isCashTx(tx)) return `CASH|${tx.operationType}|${date}|${amt}|${curr}`;
-                  const symbol = mapSymbol(String(tx.ticker || ''));
+                  const symbol = mapSymbol(tx);
                   const baseSymbol = symbol.replace(/\.(WA|L|DE|FR|AS|PA)$/i, '');
                   const qty = norm(tx.quantity);
                   return `TRADE|${tx.operationType}|${date}|${baseSymbol}|${qty}|${curr}`;
@@ -616,6 +663,29 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             {statusMessage && (
               <div className={`rounded-md border px-3 py-2 text-sm ${statusClass}`}>
                 {statusMessage}
+              </div>
+            )}
+
+            {tickerResolution && (
+              <div className={`rounded-md border px-3 py-2 text-sm ${tickerResolution.unresolved.length > 0 || tickerResolution.error ? 'border-yellow-500/40 bg-yellow-500/10 text-yellow-800 dark:text-yellow-300' : 'border-border bg-muted/40 text-muted-foreground'}`}>
+                <p className="font-medium">{tr('tickerResolution.title')}</p>
+                <p>{tr('tickerResolution.summary', {
+                  checked: tickerResolution.checked,
+                  changed: tickerResolution.changes.length,
+                  unresolved: tickerResolution.unresolved.length,
+                })}</p>
+                {tickerResolution.changes.length > 0 && (
+                  <ul className="mt-1 list-disc pl-5">
+                    {tickerResolution.changes.map((change) => (
+                      <li key={`${change.from}-${change.to}`}>{tr('tickerResolution.change', change)}</li>
+                    ))}
+                  </ul>
+                )}
+                {tickerResolution.unresolved.length > 0 && (
+                  <p className="mt-1">{tr('tickerResolution.unresolved', { tickers: tickerResolution.unresolved.join(', ') })}</p>
+                )}
+                {tickerResolution.error && <p className="mt-1">{tickerResolution.error}</p>}
+                <p className="mt-1 text-xs">{tr('tickerResolution.privacy')}</p>
               </div>
             )}
 

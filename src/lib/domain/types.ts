@@ -8,6 +8,8 @@ export type OperationType =
   | 'TRANSFER'
   | 'INTEREST'
   | 'FEE'
+  | 'ADJUSTMENT'
+  | 'SPLIT'
   | 'UNKNOWN';
 
 export interface Transaction {
@@ -82,6 +84,13 @@ export interface FeeTransaction extends Transaction {
   description?: string;
 }
 
+export interface SplitTransaction extends Transaction {
+  operationType: 'SPLIT';
+  amount: number; // split ratio, e.g. 0.0001 for a 1-for-10000 reverse split
+  ratio: number;
+  quantity?: number;
+}
+
 export interface UnknownTransaction extends Transaction {
   operationType: 'UNKNOWN';
   rawData: Record<string, any>;
@@ -97,5 +106,6 @@ export type TransactionRecord =
   | TransferTransaction
   | InterestTransaction
   | FeeTransaction
+  | SplitTransaction
   | UnknownTransaction;
 

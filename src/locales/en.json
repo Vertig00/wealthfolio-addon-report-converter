@@ -74,5 +74,12 @@
   "advanced.label": "Advanced",
   "advanced.description": "Show raw source data before conversion.",
   "raw.title": "Raw data",
-  "converted.title": "Converted data"
+  "converted.title": "Converted data",
+  "tickerResolution.title": "Ticker resolution",
+  "tickerResolution.summary": "Market search checked {checked} ticker symbols: {changed} updated, {unresolved} unresolved.",
+  "tickerResolution.change": "{from} → {to}",
+  "tickerResolution.unresolved": "Could not resolve automatically: {tickers}",
+  "tickerResolution.searchFailed": "Market search failed for {count} ticker symbols; report tickers were kept.",
+  "tickerResolution.error": "Ticker search error: {message}",
+  "tickerResolution.privacy": "Only ticker symbols and instrument names are sent to Wealthfolio market search. Statement data stays local."
 }

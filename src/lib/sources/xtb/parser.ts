@@ -15,6 +15,9 @@ const OPERATION_MAP: Record<string, OperationType> = {
   'Subaccount transfer': 'TRANSFER',
   'Swap': 'FEE',
   'Commission': 'FEE',
+  'Close trade': 'ADJUSTMENT',
+  'Fractional shares': 'ADJUSTMENT',
+  'Correction': 'ADJUSTMENT',
 };
 
 function parseDate(raw: any): Date {
@@ -49,13 +52,29 @@ function determineCurrency(ticker: string, operationType: OperationType): string
   return 'PLN';
 }
 
-function mapSymbol(ticker: string): string {
-  if (ticker.endsWith('.PL')) return ticker.slice(0, -3) + '.WA';
+const WSE_SYMBOL_ALIASES: Record<string, string> = {
+  CCC: 'MDV',
+  K2H: 'FAB',
+};
+
+function mapWseBase(base: string): string {
+  return WSE_SYMBOL_ALIASES[base.toUpperCase()] || base;
+}
+
+export function mapXTBSymbol(ticker: string): string {
+  if (ticker.endsWith('.PL')) return mapWseBase(ticker.slice(0, -3)) + '.WA';
+  if (ticker.endsWith('.WA')) return mapWseBase(ticker.slice(0, -3)) + '.WA';
   if (ticker.endsWith('.UK')) return ticker.slice(0, -3) + '.L';
   if (ticker.endsWith('.NL')) return ticker.slice(0, -3) + '.AS';
   if (ticker.endsWith('.FR')) return ticker.slice(0, -3) + '.PA';
   if (ticker.endsWith('.US')) return ticker.slice(0, -3);
   return ticker;
+}
+
+export function getWealthfolioSymbol(tx: Pick<TransactionRecord, 'ticker' | 'metadata'>): string {
+  const resolved = (tx.metadata as Record<string, any> | undefined)?.resolvedSymbol;
+  if (typeof resolved === 'string' && resolved.trim() !== '') return resolved.trim();
+  return mapXTBSymbol(tx.ticker || '');
 }
 
 function toWealthfolioActivityType(operationType: OperationType, amount?: number): string {
@@ -78,9 +97,83 @@ function parseQuantityAndPrice(comment: string): { quantity: number; price: numb
   return { quantity: quantity > 0 ? quantity : 1, price };
 }
 
+const SPLIT_COMMENT_RE = /split\s+([\d.,]+)\s+for\s+([\d.,]+)/i;
+
+interface SplitAdjustment {
+  before: number;
+  after: number;
+  sold: number;
+  ratio: number;
+}
+
+function parseSplitRatio(comment: string): number | undefined {
+  const match = comment.match(SPLIT_COMMENT_RE);
+  if (!match) return undefined;
+  const newShares = parseNumber(match[1].replace(/[,\s]/g, ''));
+  const oldShares = parseNumber(match[2].replace(/[,\s]/g, ''));
+  if (newShares <= 0 || oldShares <= 0) return undefined;
+  return newShares / oldShares;
+}
+
+function splitSubtype(ratio: number): string | undefined {
+  return ratio < 1 ? 'REVERSE_SPLIT' : undefined;
+}
+
+function computeSplitAdjustments(rows: any[]): Map<number, SplitAdjustment> {
+  const events: { index: number; time: number; key: string; quantity: number; ratio?: number }[] = [];
+
+  for (let i = 5; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || row.length < 5) continue;
+    const type = String(row[0] || '').trim();
+    const positionId = String(row[9] || '').trim();
+    const ticker = String(row[2] || '').trim();
+    const key = positionId || 'ticker:' + ticker;
+    const time = parseDate(row[4]).getTime();
+
+    if (type === 'Stock purchase' || type === 'Stock sell') {
+      const parsed = parseQuantityAndPrice(String(row[7] || '').trim());
+      if (parsed.quantity <= 0) continue;
+      events.push({
+        index: i,
+        time,
+        key,
+        quantity: type === 'Stock purchase' ? parsed.quantity : -parsed.quantity,
+      });
+    } else if (type === 'Fractional shares') {
+      const ratio = parseSplitRatio(String(row[7] || '').trim());
+      if (ratio === undefined) continue;
+      events.push({ index: i, time, key, quantity: 0, ratio });
+    }
+  }
+
+  events.sort((a, b) => a.time - b.time || b.index - a.index);
+
+  const unitsByPosition = new Map<string, number>();
+  const adjustments = new Map<number, SplitAdjustment>();
+
+  for (const event of events) {
+    const current = unitsByPosition.get(event.key) || 0;
+    if (event.ratio === undefined) {
+      unitsByPosition.set(event.key, current + event.quantity);
+      continue;
+    }
+
+    const before = current;
+    const after = before * event.ratio;
+    const rounded = Math.round(after);
+    const whole = Math.abs(after - rounded) < 1e-9 ? rounded : Math.floor(after);
+    const sold = before > 0 && after > 0 ? Math.max(0, after - whole) : 0;
+    unitsByPosition.set(event.key, after - sold);
+    adjustments.set(event.index, { before, after, sold, ratio: event.ratio });
+  }
+
+  return adjustments;
+}
+
 function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number | undefined): string {
   const dateStr = tx.date.toISOString().replace('Z', '').replace(/\.\d+$/, '');
-  const symbol = mapSymbol(tx.ticker || '');
+  const symbol = getWealthfolioSymbol(tx);
   const category = String((tx.metadata as any)?.category || '').trim().toUpperCase();
   const isCashOperation = tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || String(tx.ticker || '').startsWith('$CASH');
   const instrumentType = isCashOperation ? '' : (category === 'ETF' ? 'ETF' : 'EQUITY');
@@ -91,7 +184,7 @@ function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number 
   const feeVal = String(fee);
   let amt = '';
   const fx = fxRate !== undefined ? String(fxRate) : '';
-  const sub = '';
+  const sub = String((tx.metadata as any)?.subtype || '');
   const comm = tx.description || '';
 
   if (tx.operationType === 'BUY' || tx.operationType === 'SELL') {
@@ -121,24 +214,17 @@ export function buildWealthfolioCsv(transactions: TransactionRecord[]): string {
 }
 
 export function toActivityImport(tx: TransactionRecord, accountId: string): ActivityImport {
-  const mapSymbol = (ticker: string): string => {
-    if (ticker.endsWith('.PL')) return ticker.slice(0, -3) + '.WA';
-    if (ticker.endsWith('.UK')) return ticker.slice(0, -3) + '.L';
-    if (ticker.endsWith('.NL')) return ticker.slice(0, -3) + '.AS';
-    if (ticker.endsWith('.FR')) return ticker.slice(0, -3) + '.PA';
-    if (ticker.endsWith('.US')) return ticker.slice(0, -3);
-    return ticker;
-  };
   const category = String((tx.metadata as any)?.category || '').trim().toUpperCase();
   const isCash = tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || String(tx.ticker || '').startsWith('$CASH');
   return {
     accountId,
     activityType: toWealthfolioActivityType(tx.operationType, tx.amount) as any,
     date: tx.date,
-    symbol: mapSymbol(tx.ticker || ''),
+    symbol: getWealthfolioSymbol(tx),
     instrumentType: isCash ? undefined : (category === 'ETF' ? 'ETF' : 'EQUITY'),
     quantity: tx.quantity,
     unitPrice: tx.price,
+    subtype: (tx.metadata as any)?.subtype,
     currency: tx.currency,
     fee: 0,
     tax: 0,
@@ -239,6 +325,7 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
       derivedFxAccum.forEach((acc, posId) => {
         if (acc.qtyPrice > 0) derivedFxByPosition.set(posId, acc.amount / acc.qtyPrice);
       });
+      const splitAdjustments = computeSplitAdjustments(rows);
 
       if (!rows || rows.length < 5) {
         resolve({ transactions: [], wealthfolioCsv: '', error: 'No data rows in Cash Operations sheet' });
@@ -257,6 +344,7 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
 
         const operationType = OPERATION_MAP[type];
         if (!operationType) continue;
+        if ((operationType === 'FEE' || operationType === 'ADJUSTMENT') && type !== 'Fractional shares' && Math.abs(parseNumber(row[5])) === 0) continue;
 
         const instrument = String(row[1] || '').trim();
         let ticker = String(row[2] || '').trim();
@@ -274,6 +362,71 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
         const id = String(row[6] || '').trim();
         const comment = String(row[7] || '').trim();
         const product = String(row[8] || '').trim();
+        const positionFx = positionId && positionMap[positionId] ? positionMap[positionId] : undefined;
+
+        const splitRatio = type === 'Fractional shares' ? parseSplitRatio(comment) : undefined;
+        if (splitRatio !== undefined) {
+          const splitInfo = splitAdjustments.get(i);
+          const splitCurrency = determineCurrency(ticker, 'SPLIT');
+          const splitFx = splitCurrency === 'PLN'
+            ? undefined
+            : (derivedFxByPosition.get(positionId) ?? positionFx?.closeFx ?? positionFx?.openFx);
+          const splitDate = parseDate(time);
+          const splitId = id || `SPLIT-${i}`;
+
+          transactions.push({
+            id: splitId,
+            sourceRow: i + 1,
+            operationType: 'SPLIT',
+            date: splitDate,
+            currency: splitCurrency,
+            quantity: splitInfo?.after,
+            amount: splitRatio,
+            ratio: splitRatio,
+            fxRate: splitFx,
+            description: comment,
+            ticker,
+            isin: undefined,
+            metadata: {
+              category,
+              product,
+              positionId,
+              instrument,
+              subtype: splitSubtype(splitRatio),
+              splitRatio: comment,
+            },
+            rawData: {},
+          } as any);
+
+          if (splitInfo && splitInfo.sold > 0 && Math.abs(amount) > 0) {
+            const fxForPrice = splitCurrency === 'PLN' ? 1 : (splitFx ?? 1);
+            const soldPrice = Math.abs(amount) / fxForPrice / splitInfo.sold;
+            transactions.push({
+              id: `${splitId}-fractional-sell`,
+              sourceRow: i + 1,
+              operationType: 'SELL',
+              date: splitDate,
+              currency: splitCurrency,
+              quantity: splitInfo.sold,
+              price: soldPrice,
+              amount: Math.abs(amount),
+              fxRate: splitFx,
+              fxRateSource: splitFx !== undefined
+                ? (derivedFxByPosition.has(positionId) ? 'cash-operations' : 'closed-positions')
+                : 'none',
+              fxRateStatus: splitFx !== undefined
+                ? (derivedFxByPosition.has(positionId) ? 'estimated' : 'verified')
+                : (splitCurrency === 'PLN' ? 'verified' : 'missing'),
+              description: `${comment} (fractional shares sold)`,
+              ticker,
+              isin: undefined,
+              metadata: { category, product, positionId, instrument, generatedFromSplit: true },
+              rawData: {},
+            } as any);
+          }
+
+          continue;
+        }
 
         let quantity: number | undefined;
         let price: number | undefined;
@@ -294,7 +447,6 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
 
         const currency = determineCurrency(ticker, operationType);
 
-        const positionFx = positionId && positionMap[positionId] ? positionMap[positionId] : undefined;
         let fxRate: number | undefined;
         let fxRateSource: 'closed-positions' | 'cash-operations' | 'none' = 'none';
         let fxRateStatus: 'verified' | 'estimated' | 'missing' = 'missing';
@@ -348,7 +500,7 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
           description: comment,
           ticker,
           isin: undefined,
-          metadata: { category, product, positionId },
+          metadata: { category, product, positionId, instrument },
           rawData: {},
         };
 

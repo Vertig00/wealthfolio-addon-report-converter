@@ -27,7 +27,7 @@ function AddonExample({ ctx }: { ctx: AddonContext }) {
 const AddonRoute = () => {
   return (
     <QueryClientProvider client={addonCtx!.api.query.getClient() as any}>
-      <ConverterPage t={t} files={addonCtx!.api.files} storage={addonCtx!.api.storage} accounts={addonCtx!.api.accounts} activities={addonCtx!.api.activities} navigation={addonCtx!.api.navigation} />
+      <ConverterPage t={t} files={addonCtx!.api.files} storage={addonCtx!.api.storage} accounts={addonCtx!.api.accounts} activities={addonCtx!.api.activities} market={addonCtx!.api.market} navigation={addonCtx!.api.navigation} />
     </QueryClientProvider>
   );
 };
