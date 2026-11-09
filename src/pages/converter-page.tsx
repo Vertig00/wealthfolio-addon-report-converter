@@ -60,7 +60,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   const [language, setLanguage] = useState<'en' | 'pl'>('en');
   const [accountList, setAccountList] = useState<any[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string>('');
-  const [file, setFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [source, setSource] = useState<'XTB' | 'mBank'>('XTB');
   const [mode, setMode] = useState<'initial' | 'update'>('initial');
   const [isDragging, setIsDragging] = useState(false);
@@ -145,7 +145,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   };
 
   const startOver = () => {
-    setFile(null);
+    setSelectedFiles([]);
     setSelectedAccountId('');
     setSource('XTB');
     setMode('initial');
@@ -153,13 +153,16 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleFile = async (selected: File) => {
-    setFile(selected);
+  const handleFile = async (selected: File[]) => {
+    if (!selected || selected.length === 0) return;
+    setSelectedFiles(selected);
     resetResults();
-    const name = selected.name.toLowerCase();
+    // Use the first file for raw preview and mode inference.
+    const first = selected[0];
+    const name = first.name.toLowerCase();
     if (name.endsWith('.csv')) {
       try {
-        const csvResult = await readCSVFile(selected);
+        const csvResult = await readCSVFile(first);
         if (!csvResult.errors || csvResult.errors.length === 0) {
           setRawHeaders(csvResult.headers || []);
           setRawRows(csvResult.rows || []);
@@ -169,7 +172,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
       }
     } else if (name.endsWith('.xlsx')) {
       try {
-        const xlsxResult = await readXLSXFile(selected);
+        const xlsxResult = await readXLSXFile(first);
         if (!xlsxResult.error && xlsxResult.sheets && xlsxResult.sheets.length > 0) {
           const cashSheet = xlsxResult.sheets.find((sh: any) => sh.name === 'Cash Operations');
           const sheet = cashSheet || xlsxResult.sheets[0];
@@ -208,12 +211,12 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
-    const selected = e.dataTransfer.files?.[0];
-    if (selected) handleFile(selected);
+    const selected = Array.from(e.dataTransfer.files || []);
+    if (selected.length > 0) handleFile(selected);
   };
 
   const handleConvert = async () => {
-    if (!file) return;
+    if (selectedFiles.length === 0) return;
     setIsLoading(true);
     setConvertedRows([]);
     setConvertedHeaders([]);
@@ -223,10 +226,10 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
     setStatus('', 'info');
     setTickerResolution(null);
     setValidation({ valid: 0, warning: 0, error: 0 });
-    const name = file.name.toLowerCase();
+    const name = selectedFiles[0].name.toLowerCase();
     try {
       if (name.endsWith('.csv')) {
-        const csvResult = await readCSVFile(file);
+        const csvResult = await readCSVFile(selectedFiles[0]);
         if (csvResult.errors.length > 0) {
           setValidation({ valid: 0, warning: 0, error: csvResult.errors.length });
           setStatus(tr('error.invalidCSV'), 'error');
@@ -237,12 +240,25 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
         }
       } else if (name.endsWith('.xlsx')) {
         if (source === 'XTB') {
-          const xtbResult = await parseXTBReport(file, mode);
-          if (xtbResult.error) {
+          // Parse all selected files and merge, deduplicating by XTB operation id.
+          const mergedTransactions: any[] = [];
+          const seenIds = new Set<string>();
+          let firstError: string | null = null;
+          for (const f of selectedFiles) {
+            const xtbResult = await parseXTBReport(f, mode);
+            if (xtbResult.error) { firstError = xtbResult.error; continue; }
+            for (const tx of (xtbResult.transactions || [])) {
+              const id = String(tx.id || '');
+              if (id && seenIds.has(id)) continue;
+              if (id) seenIds.add(id);
+              mergedTransactions.push(tx);
+            }
+          }
+          if (firstError && mergedTransactions.length === 0) {
             setValidation({ valid: 0, warning: 0, error: 1 });
-            setStatus(xtbResult.error, 'error');
+            setStatus(firstError, 'error');
           } else {
-            const parsedTransactions = xtbResult.transactions || [];
+            const parsedTransactions = mergedTransactions;
             let reportTransactions = parsedTransactions;
 
             if (market?.searchTicker && parsedTransactions.length > 0) {
@@ -297,27 +313,30 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                   return isNaN(n) ? String(v ?? '') : n.toFixed(6);
                 };
                 const mapSymbol = getWealthfolioSymbol;
-                const isCashTx = (tx: any) => tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || tx.operationType === 'TRANSFER' || tx.operationType === 'TAX_WITHHOLDING' || tx.operationType === 'FEE' || String(tx.ticker || '').startsWith('$CASH');
+                const isCashTx = (tx: any) => tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || tx.operationType === 'TRANSFER' || tx.operationType === 'TAX_WITHHOLDING' || tx.operationType === 'FEE' || tx.operationType === 'DIVIDEND' || String(tx.ticker || '').startsWith('$CASH');
                 const txKey = (tx: any) => {
                   const date = tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date).split('T')[0];
                   const curr = tx.currency;
                   if (isCashTx(tx)) {
-                    const type = tx.operationType === 'TRANSFER' ? ((Number(tx.amount) || 0) >= 0 ? 'TRANSFER_IN' : 'TRANSFER_OUT') : tx.operationType === 'TAX_WITHHOLDING' ? 'TAX' : tx.operationType;
-                    const amt = norm(Math.abs(tx.amount));
-                    return `CASH|${type}|${date}|${amt}|${curr}`;
+                    const type = tx.operationType === 'TRANSFER' ? ((Number(tx.amount) || 0) >= 0 ? 'TRANSFER_IN' : 'TRANSFER_OUT') : tx.operationType === 'TAX_WITHHOLDING' ? 'TAX' : tx.operationType === 'DIVIDEND' ? 'DIVIDEND' : tx.operationType;
+                    // Use notes (not amount) as the distinguishing field: the converted
+                    // native amount depends on the per-file FX resolution and may differ
+                    // between imports, causing false negatives for dividends/tax.
+                    const notes = String(tx.description || tx.comment || '').trim().toLowerCase();
+                    return `CASH|${type}|${date}|${notes}|${curr}`;
                   }
                   const symbol = mapSymbol(tx);
                   const baseSymbol = symbol.replace(/\.(WA|L|DE|FR|AS|PA)$/i, '');
                   const qty = norm(tx.quantity);
                   return `TRADE|${tx.operationType}|${date}|${baseSymbol}|${qty}|${curr}`;
                 };
-                const isCashActivity = (a: any) => a.activityType === 'INTEREST' || a.activityType === 'DEPOSIT' || a.activityType === 'WITHDRAWAL' || a.activityType === 'TRANSFER_IN' || a.activityType === 'TRANSFER_OUT' || a.activityType === 'TAX' || a.activityType === 'FEE' || !a.assetSymbol;
+                const isCashActivity = (a: any) => a.activityType === 'INTEREST' || a.activityType === 'DEPOSIT' || a.activityType === 'WITHDRAWAL' || a.activityType === 'TRANSFER_IN' || a.activityType === 'TRANSFER_OUT' || a.activityType === 'TAX' || a.activityType === 'FEE' || a.activityType === 'DIVIDEND' || !a.assetSymbol;
                 const activityKey = (a: any) => {
                   const date = a.date instanceof Date ? a.date.toISOString().split('T')[0] : String(a.date).split('T')[0];
                   const curr = a.currency;
                   if (isCashActivity(a)) {
-                    const amt = norm(Math.abs(a.amount));
-                    return `CASH|${a.activityType}|${date}|${amt}|${curr}`;
+                    const notes = String(a.notes || a.comment || '').trim().toLowerCase();
+                    return `CASH|${a.activityType}|${date}|${notes}|${curr}`;
                   }
                   const qty = norm(a.quantity);
                   const baseAssetSymbol = String(a.assetSymbol || '').replace(/\.(WA|L|DE|FR|AS|PA)$/i, '');
@@ -325,6 +344,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                 };
                 const activityKeys = (existingActivities).map((a: any) => activityKey(a));
                 selectedTransactions = reportTransactions.filter((tx: any) => {
+                  // Exact source-record match (most reliable).
                   for (let i = 0; i < existingActivities.length; i++) {
                     if (used.has(i)) continue;
                     if (existingActivities[i].sourceRecordId && String(existingActivities[i].sourceRecordId) === String(tx.id)) {
@@ -332,12 +352,36 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                       return false;
                     }
                   }
+                  // Fuzzy key match.
                   const key = txKey(tx);
                   for (let i = 0; i < activityKeys.length; i++) {
                     if (used.has(i)) continue;
                     if (activityKeys[i] === key) {
                       used.add(i);
                       return false;
+                    }
+                  }
+                  // Fallback: for cash activities, match by (type, date, currency)
+                  // and a loose notes containment check, so that small formatting
+                  // differences or FX-derived amount drift don't cause misses.
+                  if (isCashTx(tx)) {
+                    const txType = tx.operationType === 'TRANSFER' ? ((Number(tx.amount) || 0) >= 0 ? 'TRANSFER_IN' : 'TRANSFER_OUT') : tx.operationType === 'TAX_WITHHOLDING' ? 'TAX' : tx.operationType === 'DIVIDEND' ? 'DIVIDEND' : tx.operationType;
+                    const txDate = tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date).split('T')[0];
+                    const txNotes = String(tx.description || tx.comment || '').trim().toLowerCase();
+                    for (let i = 0; i < existingActivities.length; i++) {
+                      if (used.has(i)) continue;
+                      const a = existingActivities[i];
+                      const aType = a.activityType;
+                      if (aType !== txType) continue;
+                      const aDate = a.date instanceof Date ? a.date.toISOString().split('T')[0] : String(a.date).split('T')[0];
+                      if (aDate !== txDate) continue;
+                      if (a.currency !== tx.currency) continue;
+                      const aNotes = String(a.notes || a.comment || '').trim().toLowerCase();
+                      // Match if one notes contains the other (handles minor formatting diffs).
+                      if (txNotes && aNotes && (aNotes.includes(txNotes) || txNotes.includes(aNotes))) {
+                        used.add(i);
+                        return false;
+                      }
                     }
                   }
                   return true;
@@ -370,7 +414,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
             }
           }
         } else {
-          const xlsxResult = await readXLSXFile(file);
+          const xlsxResult = await readXLSXFile(selectedFiles[0]);
           if (xlsxResult.error || xlsxResult.sheets.length === 0) {
             setValidation({ valid: 0, warning: 0, error: 1 });
             setStatus(tr('error.invalidXLSX'), 'error');
@@ -553,20 +597,21 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                 ref={fileInputRef}
                 type="file"
                 accept=".csv,.xlsx"
+                multiple
                 className="hidden"
                 onChange={(e) => {
-                  const selected = e.target.files?.[0];
-                  if (selected) handleFile(selected);
+                  const selected = Array.from(e.target.files || []);
+                  if (selected.length > 0) handleFile(selected);
                 }}
               />
-              {file && (
+              {selectedFiles.length > 0 && (
                 <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                  {file.name}
+                  {selectedFiles.length === 1 ? selectedFiles[0].name : `${selectedFiles.length} files: ${selectedFiles.map(f => f.name).join(', ')}`}
                 </div>
               )}
             </div>
 
-            {file && (
+            {selectedFiles.length > 0 && (
               <Button onClick={handleConvert} disabled={isLoading || !selectedAccountId}>
                 {isLoading ? tr('export.loading') : tr('action.convert')}
               </Button>

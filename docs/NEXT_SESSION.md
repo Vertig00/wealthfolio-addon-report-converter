@@ -105,5 +105,23 @@ Stage 1 mostly complete; Stage 2/3 partially complete; Stage 4 in progress.
   1. Ujednolicić deduplikację update: mapować `TRANSFER` -> `TRANSFER_IN/OUT`, `TAX_WITHHOLDING` -> `TAX`, używać kwot dodatnich i tej samej klasyfikacji cash/trade.
   2. Dodać testy jednostkowe na duplikaty transferów i podatków (syntetyczne dane).
   3. Naprawić walutę i kwotę dywidend/podatków (FX lub przeliczenie z per-share × liczba sztuk). — DONE (2026-11-08): FX per waluta + przeliczenie `amount_pln / fx` dla DIVIDEND/TAX_WITHHOLDING w `src/lib/sources/xtb/parser.ts`.
+  4. Naprawić FX transakcji dla gotówki. — DONE (2026-11-08): preferowanie kursu wynikającego z raportu dla BUY/SELL.
+  5. Naprawić korekty dywidend. — DONE (2026-11-08): ujemne → FEE, zerowe pomijane.
+  6. Naprawić deduplikację update. — DONE (2026-11-08): ujednolicenie txKey/activityKey dla TRANSFER i TAX.
+
+## Nowe feature'y (2026-11-09)
+- Wieloplikowe uploadowanie: input `multiple`, przeciąganie wielu plików, scalanie transakcji z deduplikacją po ID XTB. Status: zaimplementowane, wymaga testów.
+
+## Rekomendacje na później (zapisane 2026-11-09)
+1. Wyodrębnić `resolveFx` i builder `positionMap` z parser.ts (bez zmiany zachowania).
+2. Dodać reconciliation Open Positions (brakujące pozycje, np. SHELL promocja → ADJUSTMENT).
+3. Dodać test runner (vitest) + testy parsera na syntetycznych danych.
+4. Dispatch table per typ operacji (przygotowanie na mBank).
+5. Uprościć deduplikację do sourceRecordId (z fuzzy fallbackiem).
+6. Wyodrębnić split replay do modułu splits.ts.
+7. Bezpośredni import do Wealthfolio (weryfikacja SDK).
+8. mBank adapter.
+9. Walidacja row-level w UI.
+NIE robić: pełna przebudowa od zera, zastępowanie Cash Operations przez Open Positions, commitowanie realnych raportów.
   4. Po zgodzie użytkownika usunąć 94 duplikaty przez MCP i zweryfikować gotówkę.
   5. Zdecydować, co zrobić z brakującym holdingiem SHELL.
