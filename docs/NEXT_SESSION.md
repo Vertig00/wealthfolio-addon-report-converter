@@ -104,6 +104,6 @@ Stage 1 mostly complete; Stage 2/3 partially complete; Stage 4 in progress.
 - Następne kroki:
   1. Ujednolicić deduplikację update: mapować `TRANSFER` -> `TRANSFER_IN/OUT`, `TAX_WITHHOLDING` -> `TAX`, używać kwot dodatnich i tej samej klasyfikacji cash/trade.
   2. Dodać testy jednostkowe na duplikaty transferów i podatków (syntetyczne dane).
-  3. Naprawić walutę i kwotę dywidend/podatków (FX lub przeliczenie z per-share × liczba sztuk).
+  3. Naprawić walutę i kwotę dywidend/podatków (FX lub przeliczenie z per-share × liczba sztuk). — DONE (2026-11-08): FX per waluta + przeliczenie `amount_pln / fx` dla DIVIDEND/TAX_WITHHOLDING w `src/lib/sources/xtb/parser.ts`.
   4. Po zgodzie użytkownika usunąć 94 duplikaty przez MCP i zweryfikować gotówkę.
   5. Zdecydować, co zrobić z brakującym holdingiem SHELL.

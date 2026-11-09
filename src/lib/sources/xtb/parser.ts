@@ -325,6 +325,37 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
       derivedFxAccum.forEach((acc, posId) => {
         if (acc.qtyPrice > 0) derivedFxByPosition.set(posId, acc.amount / acc.qtyPrice);
       });
+
+      // Per-date/per-currency FX observations from BUY/SELL rows, used as a fallback
+      // for DIVIDEND/TAX_WITHHOLDING rows that have no position-specific FX.
+      const dateFxList: { date: number; currency: string; fx: number }[] = [];
+      const fxSumByCurrency = new Map<string, { sum: number; count: number }>();
+      for (let i = 5; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || row.length < 5) continue;
+        const type = String(row[0] || '').trim();
+        if (type !== 'Stock purchase' && type !== 'Stock sell') continue;
+        const ticker = String(row[2] || '').trim();
+        const currency = determineCurrency(ticker, type === 'Stock purchase' ? 'BUY' : 'SELL');
+        if (currency === 'PLN') continue;
+        const comment = String(row[7] || '').trim();
+        const parsed = parseQuantityAndPrice(comment);
+        const native = (parsed.quantity || 0) * (parsed.price || 0);
+        const pln = Math.abs(parseNumber(row[5]));
+        if (native <= 0 || pln <= 0) continue;
+        const fx = pln / native;
+        dateFxList.push({ date: parseDate(row[4]).getTime(), currency, fx });
+        const acc = fxSumByCurrency.get(currency) || { sum: 0, count: 0 };
+        acc.sum += fx;
+        acc.count += 1;
+        fxSumByCurrency.set(currency, acc);
+      }
+      dateFxList.sort((a, b) => a.date - b.date);
+      const avgFxByCurrency = new Map<string, number>();
+      fxSumByCurrency.forEach((acc, cur) => {
+        if (acc.count > 0) avgFxByCurrency.set(cur, acc.sum / acc.count);
+      });
+
       const splitAdjustments = computeSplitAdjustments(rows);
 
       if (!rows || rows.length < 5) {
@@ -342,7 +373,7 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
         const type = String(row[0] || '').trim();
         if (type === '' || type === 'Total') continue;
 
-        const operationType = OPERATION_MAP[type];
+        let operationType = OPERATION_MAP[type];
         if (!operationType) continue;
         if ((operationType === 'FEE' || operationType === 'ADJUSTMENT') && type !== 'Fractional shares' && Math.abs(parseNumber(row[5])) === 0) continue;
 
@@ -430,6 +461,8 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
 
         let quantity: number | undefined;
         let price: number | undefined;
+        let divPerShare = 0;
+        let isDividendCorrection = false;
 
         if (operationType === 'BUY' || operationType === 'SELL') {
           const parsed = parseQuantityAndPrice(comment);
@@ -437,9 +470,11 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
           price = parsed.price;
         } else if (operationType === 'DIVIDEND') {
           const perShareMatch = comment.match(/([\d.]+)\s*\/\s*SHR/i);
-          const perShare = perShareMatch ? parseNumber(perShareMatch[1]) : Math.abs(amount);
-          quantity = perShare > 0 ? Math.abs(amount) / perShare : 1;
-          price = perShare > 0 ? perShare : Math.abs(amount);
+          divPerShare = perShareMatch ? parseNumber(perShareMatch[1]) : 0;
+          // Negative-amount dividends are corrections/reversals; Wealthfolio imports
+          // dividends as positive cash, so handle them as signed ADJUSTMENTs instead.
+          if (amount < 0) isDividendCorrection = true;
+          // quantity and price are finalised after FX resolution below
         } else {
           quantity = 1;
           price = 1;
@@ -451,7 +486,21 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
         let fxRateSource: 'closed-positions' | 'cash-operations' | 'none' = 'none';
         let fxRateStatus: 'verified' | 'estimated' | 'missing' = 'missing';
         if (operationType === 'BUY' || operationType === 'SELL') {
-          if (operationType === 'BUY' && positionFx?.openFx) {
+          // Prefer the report-implied rate (Amount PLN / (qty x price)) so that
+          // amount (native) x fxRate reproduces the report's PLN amount exactly
+          // and cash balances reconcile. Fall back to position/derived rates only
+          // when the per-row rate cannot be computed.
+          const qtyPrice = (quantity || 0) * (price || 0);
+          const amt = Math.abs(amount);
+          if (qtyPrice > 0 && amt > 0) {
+            fxRate = amt / qtyPrice;
+            fxRateSource = 'cash-operations';
+            fxRateStatus = 'estimated';
+          } else if (derivedFxByPosition.has(positionId)) {
+            fxRate = derivedFxByPosition.get(positionId);
+            fxRateSource = 'cash-operations';
+            fxRateStatus = 'estimated';
+          } else if (operationType === 'BUY' && positionFx?.openFx) {
             fxRate = positionFx.openFx;
             fxRateSource = 'closed-positions';
             fxRateStatus = 'verified';
@@ -463,26 +512,89 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
             fxRate = positionFx.openFx;
             fxRateSource = 'closed-positions';
             fxRateStatus = 'verified';
-          } else if (derivedFxByPosition.has(positionId)) {
-            fxRate = derivedFxByPosition.get(positionId);
-            fxRateSource = 'cash-operations';
-            fxRateStatus = 'estimated';
-          } else {
-            const qtyPrice = (quantity || 0) * (price || 0);
-            const amt = Math.abs(amount);
-            if (qtyPrice > 0 && amt > 0) {
-              fxRate = amt / qtyPrice;
-              fxRateSource = 'cash-operations';
-              fxRateStatus = 'estimated';
-            }
           }
           if (fxRate == null && currency === 'PLN') {
             fxRateStatus = 'verified';
             fxRateSource = 'none';
           }
+        } else if (operationType === 'DIVIDEND' || operationType === 'TAX_WITHHOLDING') {
+          if (currency === 'PLN') {
+            fxRateStatus = 'verified';
+            fxRateSource = 'none';
+          } else {
+            if (positionId && derivedFxByPosition.has(positionId)) {
+              fxRate = derivedFxByPosition.get(positionId);
+              fxRateSource = 'cash-operations';
+              fxRateStatus = 'estimated';
+            } else if (positionId && positionFx) {
+              if (positionFx.closeFx) {
+                fxRate = positionFx.closeFx;
+                fxRateSource = 'closed-positions';
+                fxRateStatus = 'verified';
+              } else if (positionFx.openFx) {
+                fxRate = positionFx.openFx;
+                fxRateSource = 'closed-positions';
+                fxRateStatus = 'verified';
+              }
+            }
+            if (fxRate == null) {
+              const targetDate = parseDate(time).getTime();
+              let best: { fx: number; diff: number } | null = null;
+              for (const entry of dateFxList) {
+                if (entry.currency !== currency) continue;
+                const diff = Math.abs(entry.date - targetDate);
+                if (!best || diff < best.diff) best = { fx: entry.fx, diff };
+              }
+              if (best && best.diff <= 365 * 24 * 3600 * 1000) {
+                fxRate = best.fx;
+                fxRateSource = 'cash-operations';
+                fxRateStatus = 'estimated';
+              } else if (avgFxByCurrency.has(currency)) {
+                fxRate = avgFxByCurrency.get(currency);
+                fxRateSource = 'cash-operations';
+                fxRateStatus = 'estimated';
+              } else {
+                fxRate = currency === 'USD' ? 3.8 : currency === 'EUR' ? 4.3 : undefined;
+                fxRateSource = fxRate !== undefined ? 'cash-operations' : 'none';
+                fxRateStatus = fxRate !== undefined ? 'estimated' : 'missing';
+              }
+            }
+          }
         } else if (currency === 'PLN') {
           fxRateStatus = 'verified';
           fxRateSource = 'none';
+        }
+
+        if (operationType === 'DIVIDEND' && !isDividendCorrection) {
+          const fx = fxRate ?? 1;
+          if (divPerShare > 0) {
+            quantity = Math.abs(amount) / (fx * divPerShare);
+            price = divPerShare;
+          } else {
+            quantity = 1;
+            price = Math.abs(amount) / fx;
+          }
+        }
+
+        // Skip zero-amount dividends (no financial effect).
+        if (operationType === 'DIVIDEND' && amount === 0) continue;
+
+        // Compute the converted amount while operationType is still the original
+        // (DIVIDEND) so negative corrections are divided by FX correctly.
+        const txAmount = operationType === 'BUY' || operationType === 'SELL'
+          ? Math.abs(amount)
+          : (operationType === 'DIVIDEND' || operationType === 'TAX_WITHHOLDING')
+            ? amount / (fxRate ?? 1)
+            : amount;
+
+        // Convert negative-amount dividend corrections to FEE (signed) so the cash
+        // impact keeps its sign: Wealthfolio imports dividends and adjustments as
+        // positive amounts, but preserves the sign of fees.
+        if (isDividendCorrection) {
+          operationType = 'FEE';
+          ticker = '';
+          quantity = undefined;
+          price = undefined;
         }
 
         const tx: any = {
@@ -493,7 +605,7 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
           currency,
           quantity,
           price,
-          amount: operationType === 'BUY' || operationType === 'SELL' ? Math.abs(amount) : amount,
+          amount: txAmount,
           fxRate,
           fxRateSource,
           fxRateStatus,

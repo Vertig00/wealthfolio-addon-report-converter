@@ -297,23 +297,28 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                   return isNaN(n) ? String(v ?? '') : n.toFixed(6);
                 };
                 const mapSymbol = getWealthfolioSymbol;
-                const isCashTx = (tx: any) => tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || String(tx.ticker || '').startsWith('$CASH');
+                const isCashTx = (tx: any) => tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || tx.operationType === 'TRANSFER' || tx.operationType === 'TAX_WITHHOLDING' || tx.operationType === 'FEE' || String(tx.ticker || '').startsWith('$CASH');
                 const txKey = (tx: any) => {
                   const date = tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date).split('T')[0];
-                  const amt = norm(tx.amount);
                   const curr = tx.currency;
-                  if (isCashTx(tx)) return `CASH|${tx.operationType}|${date}|${amt}|${curr}`;
+                  if (isCashTx(tx)) {
+                    const type = tx.operationType === 'TRANSFER' ? ((Number(tx.amount) || 0) >= 0 ? 'TRANSFER_IN' : 'TRANSFER_OUT') : tx.operationType === 'TAX_WITHHOLDING' ? 'TAX' : tx.operationType;
+                    const amt = norm(Math.abs(tx.amount));
+                    return `CASH|${type}|${date}|${amt}|${curr}`;
+                  }
                   const symbol = mapSymbol(tx);
                   const baseSymbol = symbol.replace(/\.(WA|L|DE|FR|AS|PA)$/i, '');
                   const qty = norm(tx.quantity);
                   return `TRADE|${tx.operationType}|${date}|${baseSymbol}|${qty}|${curr}`;
                 };
-                const isCashActivity = (a: any) => a.activityType === 'INTEREST' || a.activityType === 'DEPOSIT' || a.activityType === 'WITHDRAWAL' || !a.assetSymbol;
+                const isCashActivity = (a: any) => a.activityType === 'INTEREST' || a.activityType === 'DEPOSIT' || a.activityType === 'WITHDRAWAL' || a.activityType === 'TRANSFER_IN' || a.activityType === 'TRANSFER_OUT' || a.activityType === 'TAX' || a.activityType === 'FEE' || !a.assetSymbol;
                 const activityKey = (a: any) => {
                   const date = a.date instanceof Date ? a.date.toISOString().split('T')[0] : String(a.date).split('T')[0];
-                  const amt = norm(a.amount);
                   const curr = a.currency;
-                  if (isCashActivity(a)) return `CASH|${a.activityType}|${date}|${amt}|${curr}`;
+                  if (isCashActivity(a)) {
+                    const amt = norm(Math.abs(a.amount));
+                    return `CASH|${a.activityType}|${date}|${amt}|${curr}`;
+                  }
                   const qty = norm(a.quantity);
                   const baseAssetSymbol = String(a.assetSymbol || '').replace(/\.(WA|L|DE|FR|AS|PA)$/i, '');
                   return `TRADE|${a.activityType}|${date}|${baseAssetSymbol}|${qty}|${curr}`;
