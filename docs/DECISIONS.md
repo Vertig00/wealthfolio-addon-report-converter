@@ -31,6 +31,11 @@
 - Consequence: Historical rows using the old ticker are grouped with the current asset, preserving one continuous position.
 - Later superseded by search-assisted resolution; keep explicit aliases as deterministic/offline fallbacks.
 
+## 2026-11-09 — Reconcile only promotional open-position lots
+- Reconciliation emits `ADJUSTMENT` only for open lots whose open price is greater than 0 and at most 0.01 (e.g. SHELL promotion at 0.0001).
+- Rationale: normal open lots without a cash buy are often covered by another report file (date-range mismatch) and must not be duplicated as adjustments.
+- Consequence: genuine missing positions with normal cost basis are not auto-reconciled; they require manual review.
+
 ## 2026-11-06 — Search renamed tickers through the host market API
 - Rationale: Hardcoded aliases do not scale to future ticker changes.
 - Implementation: exact mapped symbol first; if missing, search ISIN/base ticker/instrument name via `ctx.api.market.searchTicker`.

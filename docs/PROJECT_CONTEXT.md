@@ -30,8 +30,16 @@
 ## Open questions
 
 - Exact handling of partial XTB fills and grouped position rows is not fully verified.
+- Internal `Transfer` / `Subaccount transfer` rows are skipped only when their comment matches `Transfer from <id> to <id>` (subaccount transfers, net-zero within one Wealthfolio account). Other transfers are still imported. This avoids "incomplete transfer" warnings.
+- IKE may show a temporary negative cash balance warning (e.g. 2025-06-05: -7.76 PLN) due to XTB timing; final balance reconciles (422.96 PLN).
 - Dividend tax withholding and fee mapping are not yet represented.
 - Direct Wealthfolio import (Stage 5) is not implemented.
+
+## Refaktoryzacja i reconciliation (2026-11-09)
+
+- Wyodrębniono `resolveFx` do `src/lib/sources/xtb/fx.ts` i builder `positionMap` do `src/lib/sources/xtb/position-map.ts` (bez zmiany zachowania).
+- Dodano reconciliation Open Positions: brakujące loty promocyjne (cena otwarcia ~0) emitowane jako `BUY` z id `RECON-<positionId>` (cena promocyjna), żeby Wealthfolio utworzyło holding.
+- Zweryfikowano na próbkach: PLN → 1 recon (SHELL), IKE → 0 recon (brak fałszywych duplikatów).
 
 ## Release
 

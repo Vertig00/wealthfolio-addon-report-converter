@@ -1,6 +1,10 @@
 import { readXLSXFile } from '../../file-readers';
 import type { TransactionRecord, OperationType } from '../../domain/types';
 import type { ActivityImport } from '@wealthfolio/addon-sdk';
+import { buildPositionMap, type PositionMap } from './position-map';
+import { resolveFx, type DateFxEntry } from './fx';
+import { computeSplitAdjustments, parseSplitRatio, splitSubtype, type SplitAdjustment } from './splits';
+import { parseNumber, parseDate, determineCurrency } from './utils';
 
 const OPERATION_MAP: Record<string, OperationType> = {
   'Stock purchase': 'BUY',
@@ -20,38 +24,6 @@ const OPERATION_MAP: Record<string, OperationType> = {
   'Correction': 'ADJUSTMENT',
 };
 
-function parseDate(raw: any): Date {
-  if (!raw) return new Date();
-  if (raw instanceof Date) return raw;
-  if (typeof raw === 'number') {
-    if (raw > 0 && raw < 100000) {
-      return new Date((raw - 25569) * 86400 * 1000);
-    }
-    const date = new Date(raw * 1000);
-    if (!isNaN(date.getTime())) return date;
-  }
-  const dateStr = String(raw).trim();
-  if (dateStr === '') return new Date();
-  const parsed = new Date(dateStr);
-  return isNaN(parsed.getTime()) ? new Date() : parsed;
-}
-
-function parseNumber(raw: any): number {
-  if (raw == null || raw === '') return 0;
-  const n = Number(raw);
-  return isNaN(n) ? 0 : n;
-}
-
-function determineCurrency(ticker: string, operationType: OperationType): string {
-  if (operationType === 'DEPOSIT' || operationType === 'WITHDRAWAL' || operationType === 'TRANSFER' || operationType === 'INTEREST' || operationType === 'FEE' || operationType === 'TAX_WITHHOLDING') {
-    if (!ticker) return 'PLN';
-  }
-  if (ticker.endsWith('.PL') || ticker.endsWith('.WA')) return 'PLN';
-  if (ticker.endsWith('.US') || ticker.endsWith('.UK') || ticker.endsWith('.L')) return 'USD';
-  if (ticker.endsWith('.DE') || ticker.endsWith('.NL') || ticker.endsWith('.FR') || ticker.endsWith('.AS') || ticker.endsWith('.PA')) return 'EUR';
-  return 'PLN';
-}
-
 const WSE_SYMBOL_ALIASES: Record<string, string> = {
   CCC: 'MDV',
   K2H: 'FAB',
@@ -61,14 +33,24 @@ function mapWseBase(base: string): string {
   return WSE_SYMBOL_ALIASES[base.toUpperCase()] || base;
 }
 
+const XTB_SYMBOL_SUFFIX_MAP: Record<string, string> = {
+  PL: 'WA',
+  WA: 'WA',
+  UK: 'L',
+  NL: 'AS',
+  FR: 'PA',
+  US: '',
+};
+
 export function mapXTBSymbol(ticker: string): string {
-  if (ticker.endsWith('.PL')) return mapWseBase(ticker.slice(0, -3)) + '.WA';
-  if (ticker.endsWith('.WA')) return mapWseBase(ticker.slice(0, -3)) + '.WA';
-  if (ticker.endsWith('.UK')) return ticker.slice(0, -3) + '.L';
-  if (ticker.endsWith('.NL')) return ticker.slice(0, -3) + '.AS';
-  if (ticker.endsWith('.FR')) return ticker.slice(0, -3) + '.PA';
-  if (ticker.endsWith('.US')) return ticker.slice(0, -3);
-  return ticker;
+  const dot = ticker.lastIndexOf('.');
+  if (dot <= 0) return ticker;
+  const suffix = ticker.slice(dot + 1).toUpperCase();
+  const mappedSuffix = XTB_SYMBOL_SUFFIX_MAP[suffix];
+  if (mappedSuffix === undefined) return ticker;
+  const base = ticker.slice(0, dot);
+  const mappedBase = suffix === 'PL' || suffix === 'WA' ? mapWseBase(base) : base;
+  return mappedSuffix ? `${mappedBase}.${mappedSuffix}` : mappedBase;
 }
 
 export function getWealthfolioSymbol(tx: Pick<TransactionRecord, 'ticker' | 'metadata'>): string {
@@ -97,86 +79,19 @@ function parseQuantityAndPrice(comment: string): { quantity: number; price: numb
   return { quantity: quantity > 0 ? quantity : 1, price };
 }
 
-const SPLIT_COMMENT_RE = /split\s+([\d.,]+)\s+for\s+([\d.,]+)/i;
-
-interface SplitAdjustment {
-  before: number;
-  after: number;
-  sold: number;
-  ratio: number;
+function isCashTransaction(tx: TransactionRecord): boolean {
+  return tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || String(tx.ticker || '').startsWith('$CASH');
 }
 
-function parseSplitRatio(comment: string): number | undefined {
-  const match = comment.match(SPLIT_COMMENT_RE);
-  if (!match) return undefined;
-  const newShares = parseNumber(match[1].replace(/[,\s]/g, ''));
-  const oldShares = parseNumber(match[2].replace(/[,\s]/g, ''));
-  if (newShares <= 0 || oldShares <= 0) return undefined;
-  return newShares / oldShares;
-}
-
-function splitSubtype(ratio: number): string | undefined {
-  return ratio < 1 ? 'REVERSE_SPLIT' : undefined;
-}
-
-function computeSplitAdjustments(rows: any[]): Map<number, SplitAdjustment> {
-  const events: { index: number; time: number; key: string; quantity: number; ratio?: number }[] = [];
-
-  for (let i = 5; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row || row.length < 5) continue;
-    const type = String(row[0] || '').trim();
-    const positionId = String(row[9] || '').trim();
-    const ticker = String(row[2] || '').trim();
-    const key = positionId || 'ticker:' + ticker;
-    const time = parseDate(row[4]).getTime();
-
-    if (type === 'Stock purchase' || type === 'Stock sell') {
-      const parsed = parseQuantityAndPrice(String(row[7] || '').trim());
-      if (parsed.quantity <= 0) continue;
-      events.push({
-        index: i,
-        time,
-        key,
-        quantity: type === 'Stock purchase' ? parsed.quantity : -parsed.quantity,
-      });
-    } else if (type === 'Fractional shares') {
-      const ratio = parseSplitRatio(String(row[7] || '').trim());
-      if (ratio === undefined) continue;
-      events.push({ index: i, time, key, quantity: 0, ratio });
-    }
-  }
-
-  events.sort((a, b) => a.time - b.time || b.index - a.index);
-
-  const unitsByPosition = new Map<string, number>();
-  const adjustments = new Map<number, SplitAdjustment>();
-
-  for (const event of events) {
-    const current = unitsByPosition.get(event.key) || 0;
-    if (event.ratio === undefined) {
-      unitsByPosition.set(event.key, current + event.quantity);
-      continue;
-    }
-
-    const before = current;
-    const after = before * event.ratio;
-    const rounded = Math.round(after);
-    const whole = Math.abs(after - rounded) < 1e-9 ? rounded : Math.floor(after);
-    const sold = before > 0 && after > 0 ? Math.max(0, after - whole) : 0;
-    unitsByPosition.set(event.key, after - sold);
-    adjustments.set(event.index, { before, after, sold, ratio: event.ratio });
-  }
-
-  return adjustments;
+function instrumentTypeFor(tx: TransactionRecord, category: string): string {
+  return isCashTransaction(tx) ? '' : (category === 'ETF' ? 'ETF' : 'EQUITY');
 }
 
 function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number | undefined): string {
   const dateStr = tx.date.toISOString().replace('Z', '').replace(/\.\d+$/, '');
   const symbol = getWealthfolioSymbol(tx);
   const category = String((tx.metadata as any)?.category || '').trim().toUpperCase();
-  const isCashOperation = tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || String(tx.ticker || '').startsWith('$CASH');
-  const instrumentType = isCashOperation ? '' : (category === 'ETF' ? 'ETF' : 'EQUITY');
+  const instrumentType = instrumentTypeFor(tx, category);
   let qty = '';
   const act = toWealthfolioActivityType(tx.operationType, tx.amount);
   let uPrice = '';
@@ -215,7 +130,7 @@ export function buildWealthfolioCsv(transactions: TransactionRecord[]): string {
 
 export function toActivityImport(tx: TransactionRecord, accountId: string): ActivityImport {
   const category = String((tx.metadata as any)?.category || '').trim().toUpperCase();
-  const isCash = tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || String(tx.ticker || '').startsWith('$CASH');
+  const isCash = isCashTransaction(tx);
   return {
     accountId,
     activityType: toWealthfolioActivityType(tx.operationType, tx.amount) as any,
@@ -263,44 +178,7 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
       const openSheet = sheets.find((sh: any) => sh.name === 'Open Positions');
       const closedSheet = sheets.find((sh: any) => sh.name === 'Closed Positions');
 
-      const positionMap: Record<string, { ticker: string; category: string; openFx?: number; closeFx?: number }> = {};
-      if (openSheet?.rows) {
-        for (const r of openSheet.rows) {
-          if (!r || r.length < 3) continue;
-          const posId = String(r[1] || '').trim();
-          const ticker = String(r[2] || '').trim();
-          const category = String(r[3] || '').trim();
-          if (/^\d+$/.test(posId) && ticker) {
-            positionMap[posId] = { ticker, category: category || positionMap[posId]?.category || '' };
-          }
-          // summary rows: instrument name, ticker, category
-          const instrument = String(r[1] || '').trim();
-          const t = String(r[2] || '').trim();
-          const cat = String(r[3] || '').trim();
-          if (t && cat && !/^\d+$/.test(instrument)) {
-            // store by ticker for category lookup
-            positionMap['ticker:' + t] = { ticker: t, category: cat };
-          }
-        }
-      }
-      if (closedSheet?.rows) {
-        for (const r of closedSheet.rows) {
-          if (!r || r.length < 4) continue;
-          const ticker = String(r[1] || '').trim();
-          const category = String(r[2] || '').trim();
-          const posId = String(r[23] || '').trim();
-          const openFx = parseNumber(r[20]);
-          const closeFx = parseNumber(r[21]);
-          if (posId && ticker) {
-            positionMap[posId] = {
-              ticker,
-              category: category || positionMap[posId]?.category || '',
-              openFx: openFx > 0 ? openFx : positionMap[posId]?.openFx,
-              closeFx: closeFx > 0 ? closeFx : positionMap[posId]?.closeFx,
-            };
-          }
-        }
-      }
+      const positionMap: PositionMap = buildPositionMap(openSheet, closedSheet);
 
       const rows = cashSheet.rows;
       const derivedFxAccum = new Map<string, { amount: number; qtyPrice: number }>();
@@ -328,7 +206,7 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
 
       // Per-date/per-currency FX observations from BUY/SELL rows, used as a fallback
       // for DIVIDEND/TAX_WITHHOLDING rows that have no position-specific FX.
-      const dateFxList: { date: number; currency: string; fx: number }[] = [];
+      const dateFxList: DateFxEntry[] = [];
       const fxSumByCurrency = new Map<string, { sum: number; count: number }>();
       for (let i = 5; i < rows.length; i++) {
         const row = rows[i];
@@ -392,6 +270,11 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
         const amount = parseNumber(row[5]);
         const id = String(row[6] || '').trim();
         const comment = String(row[7] || '').trim();
+        // Skip internal transfers between the main account and investment plans:
+        // they are net-zero within a single Wealthfolio account and otherwise
+        // trigger "incomplete transfer" warnings (same-account links are not
+        // allowed). External transfers (if any) are still imported.
+        if (operationType === 'TRANSFER' && /Transfer from \d+ to \d+/.test(comment)) continue;
         const product = String(row[8] || '').trim();
         const positionFx = positionId && positionMap[positionId] ? positionMap[positionId] : undefined;
 
@@ -482,88 +365,23 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
 
         const currency = determineCurrency(ticker, operationType);
 
-        let fxRate: number | undefined;
-        let fxRateSource: 'closed-positions' | 'cash-operations' | 'none' = 'none';
-        let fxRateStatus: 'verified' | 'estimated' | 'missing' = 'missing';
-        if (operationType === 'BUY' || operationType === 'SELL') {
-          // Prefer the report-implied rate (Amount PLN / (qty x price)) so that
-          // amount (native) x fxRate reproduces the report's PLN amount exactly
-          // and cash balances reconcile. Fall back to position/derived rates only
-          // when the per-row rate cannot be computed.
-          const qtyPrice = (quantity || 0) * (price || 0);
-          const amt = Math.abs(amount);
-          if (qtyPrice > 0 && amt > 0) {
-            fxRate = amt / qtyPrice;
-            fxRateSource = 'cash-operations';
-            fxRateStatus = 'estimated';
-          } else if (derivedFxByPosition.has(positionId)) {
-            fxRate = derivedFxByPosition.get(positionId);
-            fxRateSource = 'cash-operations';
-            fxRateStatus = 'estimated';
-          } else if (operationType === 'BUY' && positionFx?.openFx) {
-            fxRate = positionFx.openFx;
-            fxRateSource = 'closed-positions';
-            fxRateStatus = 'verified';
-          } else if (operationType === 'SELL' && positionFx?.closeFx) {
-            fxRate = positionFx.closeFx;
-            fxRateSource = 'closed-positions';
-            fxRateStatus = 'verified';
-          } else if (operationType === 'SELL' && positionFx?.openFx) {
-            fxRate = positionFx.openFx;
-            fxRateSource = 'closed-positions';
-            fxRateStatus = 'verified';
-          }
-          if (fxRate == null && currency === 'PLN') {
-            fxRateStatus = 'verified';
-            fxRateSource = 'none';
-          }
-        } else if (operationType === 'DIVIDEND' || operationType === 'TAX_WITHHOLDING') {
-          if (currency === 'PLN') {
-            fxRateStatus = 'verified';
-            fxRateSource = 'none';
-          } else {
-            if (positionId && derivedFxByPosition.has(positionId)) {
-              fxRate = derivedFxByPosition.get(positionId);
-              fxRateSource = 'cash-operations';
-              fxRateStatus = 'estimated';
-            } else if (positionId && positionFx) {
-              if (positionFx.closeFx) {
-                fxRate = positionFx.closeFx;
-                fxRateSource = 'closed-positions';
-                fxRateStatus = 'verified';
-              } else if (positionFx.openFx) {
-                fxRate = positionFx.openFx;
-                fxRateSource = 'closed-positions';
-                fxRateStatus = 'verified';
-              }
-            }
-            if (fxRate == null) {
-              const targetDate = parseDate(time).getTime();
-              let best: { fx: number; diff: number } | null = null;
-              for (const entry of dateFxList) {
-                if (entry.currency !== currency) continue;
-                const diff = Math.abs(entry.date - targetDate);
-                if (!best || diff < best.diff) best = { fx: entry.fx, diff };
-              }
-              if (best && best.diff <= 365 * 24 * 3600 * 1000) {
-                fxRate = best.fx;
-                fxRateSource = 'cash-operations';
-                fxRateStatus = 'estimated';
-              } else if (avgFxByCurrency.has(currency)) {
-                fxRate = avgFxByCurrency.get(currency);
-                fxRateSource = 'cash-operations';
-                fxRateStatus = 'estimated';
-              } else {
-                fxRate = currency === 'USD' ? 3.8 : currency === 'EUR' ? 4.3 : undefined;
-                fxRateSource = fxRate !== undefined ? 'cash-operations' : 'none';
-                fxRateStatus = fxRate !== undefined ? 'estimated' : 'missing';
-              }
-            }
-          }
-        } else if (currency === 'PLN') {
-          fxRateStatus = 'verified';
-          fxRateSource = 'none';
-        }
+        const fxResolved = resolveFx({
+          currency,
+          operationType,
+          positionId,
+          positionFx,
+          derivedFxByPosition,
+          dateFxList,
+          avgFxByCurrency,
+          time,
+          parseDate,
+          quantity,
+          price,
+          amount,
+        });
+        let fxRate = fxResolved.fxRate;
+        let fxRateSource = fxResolved.fxRateSource;
+        let fxRateStatus = fxResolved.fxRateStatus;
 
         if (operationType === 'DIVIDEND' && !isDividendCorrection) {
           const fx = fxRate ?? 1;
@@ -617,6 +435,89 @@ export function parseXTBReport(file: File, mode: 'initial' | 'update' = 'initial
         };
 
         transactions.push(tx);
+      }
+
+      // Reconciliation: open-position lots that have no corresponding "Stock purchase"
+      // in Cash Operations (e.g. promotional shares) are emitted as ADJUSTMENT rows so
+      // the resulting holdings match the report's Open Positions sheet.
+      const buyPositionIds = new Set<string>();
+      for (let k = 5; k < rows.length; k++) {
+        const r = rows[k];
+        if (!r) continue;
+        if (String(r[0] || '').trim() !== 'Stock purchase') continue;
+        const pid = String(r[9] || '').trim();
+        if (pid) buyPositionIds.add(pid);
+      }
+
+      if (openSheet?.rows) {
+        for (const r of openSheet.rows) {
+          if (!r || r.length < 10) continue;
+          const posId = String(r[1] || '').trim();
+          if (!/^\d+$/.test(posId)) continue;
+          const volume = parseNumber(r[5]);
+          if (volume <= 0) continue;
+          if (buyPositionIds.has(posId)) continue;
+          const ticker = String(r[2] || '').trim();
+          if (!ticker) continue;
+
+          const openPrice = parseNumber(r[8]);
+          const currentPrice = parseNumber(r[7]);
+          // Only reconcile promotional/near-zero-cost lots (e.g. SHELL promotion).
+          // Normal open lots without a cash buy are usually covered by another
+          // report file (date-range mismatch) and must not be duplicated.
+          if (openPrice <= 0 || openPrice > 0.01) continue;
+
+          const category = String(r[3] || '').trim()
+            || (positionMap[posId]?.category || '')
+            || (positionMap['ticker:' + ticker]?.category || '');
+          const price = openPrice > 0 ? openPrice : (currentPrice > 0 ? currentPrice : 0);
+          const currency = determineCurrency(ticker, 'BUY');
+          // Promotional shares are imported as a BUY at the promotional price so
+          // Wealthfolio creates the holding (ADJUSTMENT alone does not).
+          const amount = price > 0 ? volume * price : 0;
+          const openTime = r[9];
+          const date = parseDate(openTime);
+          const positionFx = positionMap[posId];
+          const fxResolved = resolveFx({
+            currency,
+            operationType: 'DIVIDEND',
+            positionId: posId,
+            positionFx,
+            derivedFxByPosition,
+            dateFxList,
+            avgFxByCurrency,
+            time: openTime,
+            parseDate,
+            quantity: volume,
+            price,
+            amount,
+          });
+
+          transactions.push({
+            id: `RECON-${posId}`,
+            sourceRow: 0,
+            operationType: 'BUY',
+            date,
+            currency,
+            quantity: volume,
+            price: price > 0 ? price : undefined,
+            amount,
+            fxRate: fxResolved.fxRate,
+            fxRateSource: fxResolved.fxRateSource,
+            fxRateStatus: fxResolved.fxRateStatus,
+            description: `Open position reconciliation (${ticker})`,
+            ticker,
+            isin: undefined,
+            metadata: {
+              category,
+              product: String(r[0] || '').trim(),
+              positionId: posId,
+              instrument: ticker,
+              reconciledFromOpenPositions: true,
+            },
+            rawData: {},
+          } as any);
+        }
       }
 
       const dateFrom = transactions.length ? new Date(Math.min(...transactions.map((tx: any) => tx.date.getTime()))) : new Date();

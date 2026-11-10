@@ -112,13 +112,22 @@ Stage 1 mostly complete; Stage 2/3 partially complete; Stage 4 in progress.
 ## Nowe feature'y (2026-11-09)
 - Wieloplikowe uploadowanie: input `multiple`, przeciąganie wielu plików, scalanie transakcji z deduplikacją po ID XTB. Status: zaimplementowane, wymaga testów.
 
+## Uproszczenia i refaktoryzacja (2026-11-09)
+
+- Wyodrębniono wspólne utils (`parseNumber`, `parseDate`, `determineCurrency`) i ujednolicono mapowanie sufiksów w `mapXTBSymbol`/`determineCurrency`.
+- Dodano helpery `isCashTransaction` i `instrumentTypeFor` w parserze.
+- Uodporniono `readXLSXSheets` na rzeczywisty zakres arkusza (zamiast stałych 20 kolumn).
+- Wydzielono parsowanie/scalanie plików XTB i rozwiązywanie tickerów do `report-converter.ts`.
+- Uproszczono `converter-page.tsx` (mniejszy `handleConvert`).
+- Nie zrobiono: cache ticker-resolvera (punkt 5 z propozycji) — zostawiono do decyzji.
+
 ## Rekomendacje na później (zapisane 2026-11-09)
-1. Wyodrębnić `resolveFx` i builder `positionMap` z parser.ts (bez zmiany zachowania).
-2. Dodać reconciliation Open Positions (brakujące pozycje, np. SHELL promocja → ADJUSTMENT).
-3. Dodać test runner (vitest) + testy parsera na syntetycznych danych.
+1. Wyodrębnić `resolveFx` i builder `positionMap` z parser.ts (bez zmiany zachowania). — DONE (2026-11-09): nowe moduły `src/lib/sources/xtb/fx.ts` i `src/lib/sources/xtb/position-map.ts`; parser importuje je.
+2. Dodać reconciliation Open Positions (brakujące pozycje, np. SHELL promocja → ADJUSTMENT). — DONE (2026-11-09): emitowane `ADJUSTMENT` (id `RECON-<positionId>`) tylko dla lotów o cenie otwarcia ~0 (promocja, np. SHELL 1 szt. po 0.0001); zweryfikowano na próbkach PLN (1 recon) i IKE (0 recon, brak fałszywych duplikatów).
+3. Dodać test runner (vitest) + testy parsera na syntetycznych danych. — DONE (2026-11-09): Vitest 5.1.0 (pnpm), skrypt `pnpm test`, 5 testów w `src/lib/sources/xtb/parser.test.ts` (basic buy, Total skip, reconciliation promocyjna, brak recon dla normalnych cen, dividend per-share).
 4. Dispatch table per typ operacji (przygotowanie na mBank).
-5. Uprościć deduplikację do sourceRecordId (z fuzzy fallbackiem).
-6. Wyodrębnić split replay do modułu splits.ts.
+5. Uprościć deduplikację do sourceRecordId (z fuzzy fallbackiem). — DONE (2026-11-09): logika przeniesiona do `src/lib/sources/xtb/dedup.ts` (`deduplicateUpdateTransactions`); UI wywołuje helper; priorytet: sourceRecordId → fuzzy key → cash fallback.
+6. Wyodrębnić split replay do modułu splits.ts. — DONE (2026-11-09): `computeSplitAdjustments`, `parseSplitRatio`, `splitSubtype`, `SplitAdjustment` przeniesione do `src/lib/sources/xtb/splits.ts`.
 7. Bezpośredni import do Wealthfolio (weryfikacja SDK).
 8. mBank adapter.
 9. Walidacja row-level w UI.

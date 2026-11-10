@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { readXLSXFile, readCSVFile } from '../lib/file-readers';
-import { parseXTBReport, buildWealthfolioCsv, toActivityImport, mapXTBSymbol, getWealthfolioSymbol } from '../lib/sources/xtb';
-import { applyTickerResolutions, resolveTickerCandidates } from '../lib/market/ticker-resolver';
-import type { TickerLookupInput } from '../lib/market/ticker-resolver';
+import { buildWealthfolioCsv, toActivityImport } from '../lib/sources/xtb';
+import { deduplicateUpdateTransactions } from '../lib/sources/xtb/dedup';
+import { convertXTBFiles } from '../lib/sources/xtb/report-converter';
+import type { TickerResolutionView } from '../lib/sources/xtb/report-converter';
 import { SearchableIconSelect } from '../components/searchable-icon-select';
 import { TrendingUp, Wallet, CreditCard, Bitcoin, Building2 } from 'lucide-react';
 import {
@@ -46,13 +47,6 @@ function formatDate(d: any): string {
   if (!d) return '';
   if (d instanceof Date) return isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0];
   return String(d);
-}
-
-interface TickerResolutionView {
-  checked: number;
-  changes: Array<{ from: string; to: string }>;
-  unresolved: string[];
-  error?: string;
 }
 
 export function ConverterPage({ t, files, storage, accounts, activities, market, navigation }: { t: Translate; files: any; storage: any; accounts: any; activities: any; market?: any; navigation: any }) {
@@ -241,155 +235,24 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
       } else if (name.endsWith('.xlsx')) {
         if (source === 'XTB') {
           // Parse all selected files and merge, deduplicating by XTB operation id.
-          const mergedTransactions: any[] = [];
-          const seenIds = new Set<string>();
-          let firstError: string | null = null;
-          for (const f of selectedFiles) {
-            const xtbResult = await parseXTBReport(f, mode);
-            if (xtbResult.error) { firstError = xtbResult.error; continue; }
-            for (const tx of (xtbResult.transactions || [])) {
-              const id = String(tx.id || '');
-              if (id && seenIds.has(id)) continue;
-              if (id) seenIds.add(id);
-              mergedTransactions.push(tx);
-            }
-          }
-          if (firstError && mergedTransactions.length === 0) {
+          const conversion = await convertXTBFiles(selectedFiles, mode, market, tr);
+          if (conversion.firstError && conversion.transactions.length === 0) {
             setValidation({ valid: 0, warning: 0, error: 1 });
-            setStatus(firstError, 'error');
+            setStatus(conversion.firstError, 'error');
           } else {
-            const parsedTransactions = mergedTransactions;
-            let reportTransactions = parsedTransactions;
-
-            if (market?.searchTicker && parsedTransactions.length > 0) {
-              const inputsByTicker = new Map<string, TickerLookupInput>();
-              for (const tx of parsedTransactions) {
-                const ticker = String(tx.ticker || '').trim();
-                if (!ticker || ticker.startsWith('$CASH') || inputsByTicker.has(ticker)) continue;
-                inputsByTicker.set(ticker, {
-                  ticker,
-                  fallbackSymbol: mapXTBSymbol(ticker),
-                  instrumentName: typeof tx.metadata?.instrument === 'string' ? tx.metadata.instrument : undefined,
-                  isin: tx.isin,
-                  expectedCurrency: tx.currency,
-                });
-              }
-
-              if (inputsByTicker.size > 0) {
-                try {
-                  const resolution = await resolveTickerCandidates(
-                    Array.from(inputsByTicker.values()),
-                    (query: string) => market.searchTicker(query),
-                  );
-                  reportTransactions = applyTickerResolutions(parsedTransactions, resolution.byTicker);
-                  setTickerResolution({
-                    checked: resolution.checked,
-                    changes: resolution.changes.map((item) => ({ from: item.requestedTicker, to: item.symbol })),
-                    unresolved: [...resolution.ambiguous, ...resolution.notFound, ...resolution.failed].map((item) => item.requestedTicker),
-                    error: resolution.failed.length > 0
-                      ? tr('tickerResolution.searchFailed', { count: resolution.failed.length })
-                      : undefined,
-                  });
-                } catch (error) {
-                  setTickerResolution({
-                    checked: inputsByTicker.size,
-                    changes: [],
-                    unresolved: [],
-                    error: tr('tickerResolution.error', { message: error instanceof Error ? error.message : String(error) }),
-                  });
-                }
-              }
-            }
+            const reportTransactions = conversion.transactions;
+            setTickerResolution(conversion.tickerResolution);
 
             let selectedTransactions = reportTransactions;
-            let existingActivities: any[] = [];
             if (mode === 'update' && activities && selectedAccountId) {
               try {
                 const existing = await activities.getAll(selectedAccountId);
-                existingActivities = existing || [];
-                const used = new Set<number>();
-                const norm = (v: any) => {
-                  const n = Number(v);
-                  return isNaN(n) ? String(v ?? '') : n.toFixed(6);
-                };
-                const mapSymbol = getWealthfolioSymbol;
-                const isCashTx = (tx: any) => tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || tx.operationType === 'TRANSFER' || tx.operationType === 'TAX_WITHHOLDING' || tx.operationType === 'FEE' || tx.operationType === 'DIVIDEND' || String(tx.ticker || '').startsWith('$CASH');
-                const txKey = (tx: any) => {
-                  const date = tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date).split('T')[0];
-                  const curr = tx.currency;
-                  if (isCashTx(tx)) {
-                    const type = tx.operationType === 'TRANSFER' ? ((Number(tx.amount) || 0) >= 0 ? 'TRANSFER_IN' : 'TRANSFER_OUT') : tx.operationType === 'TAX_WITHHOLDING' ? 'TAX' : tx.operationType === 'DIVIDEND' ? 'DIVIDEND' : tx.operationType;
-                    // Use notes (not amount) as the distinguishing field: the converted
-                    // native amount depends on the per-file FX resolution and may differ
-                    // between imports, causing false negatives for dividends/tax.
-                    const notes = String(tx.description || tx.comment || '').trim().toLowerCase();
-                    return `CASH|${type}|${date}|${notes}|${curr}`;
-                  }
-                  const symbol = mapSymbol(tx);
-                  const baseSymbol = symbol.replace(/\.(WA|L|DE|FR|AS|PA)$/i, '');
-                  const qty = norm(tx.quantity);
-                  return `TRADE|${tx.operationType}|${date}|${baseSymbol}|${qty}|${curr}`;
-                };
-                const isCashActivity = (a: any) => a.activityType === 'INTEREST' || a.activityType === 'DEPOSIT' || a.activityType === 'WITHDRAWAL' || a.activityType === 'TRANSFER_IN' || a.activityType === 'TRANSFER_OUT' || a.activityType === 'TAX' || a.activityType === 'FEE' || a.activityType === 'DIVIDEND' || !a.assetSymbol;
-                const activityKey = (a: any) => {
-                  const date = a.date instanceof Date ? a.date.toISOString().split('T')[0] : String(a.date).split('T')[0];
-                  const curr = a.currency;
-                  if (isCashActivity(a)) {
-                    const notes = String(a.notes || a.comment || '').trim().toLowerCase();
-                    return `CASH|${a.activityType}|${date}|${notes}|${curr}`;
-                  }
-                  const qty = norm(a.quantity);
-                  const baseAssetSymbol = String(a.assetSymbol || '').replace(/\.(WA|L|DE|FR|AS|PA)$/i, '');
-                  return `TRADE|${a.activityType}|${date}|${baseAssetSymbol}|${qty}|${curr}`;
-                };
-                const activityKeys = (existingActivities).map((a: any) => activityKey(a));
-                selectedTransactions = reportTransactions.filter((tx: any) => {
-                  // Exact source-record match (most reliable).
-                  for (let i = 0; i < existingActivities.length; i++) {
-                    if (used.has(i)) continue;
-                    if (existingActivities[i].sourceRecordId && String(existingActivities[i].sourceRecordId) === String(tx.id)) {
-                      used.add(i);
-                      return false;
-                    }
-                  }
-                  // Fuzzy key match.
-                  const key = txKey(tx);
-                  for (let i = 0; i < activityKeys.length; i++) {
-                    if (used.has(i)) continue;
-                    if (activityKeys[i] === key) {
-                      used.add(i);
-                      return false;
-                    }
-                  }
-                  // Fallback: for cash activities, match by (type, date, currency)
-                  // and a loose notes containment check, so that small formatting
-                  // differences or FX-derived amount drift don't cause misses.
-                  if (isCashTx(tx)) {
-                    const txType = tx.operationType === 'TRANSFER' ? ((Number(tx.amount) || 0) >= 0 ? 'TRANSFER_IN' : 'TRANSFER_OUT') : tx.operationType === 'TAX_WITHHOLDING' ? 'TAX' : tx.operationType === 'DIVIDEND' ? 'DIVIDEND' : tx.operationType;
-                    const txDate = tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date).split('T')[0];
-                    const txNotes = String(tx.description || tx.comment || '').trim().toLowerCase();
-                    for (let i = 0; i < existingActivities.length; i++) {
-                      if (used.has(i)) continue;
-                      const a = existingActivities[i];
-                      const aType = a.activityType;
-                      if (aType !== txType) continue;
-                      const aDate = a.date instanceof Date ? a.date.toISOString().split('T')[0] : String(a.date).split('T')[0];
-                      if (aDate !== txDate) continue;
-                      if (a.currency !== tx.currency) continue;
-                      const aNotes = String(a.notes || a.comment || '').trim().toLowerCase();
-                      // Match if one notes contains the other (handles minor formatting diffs).
-                      if (txNotes && aNotes && (aNotes.includes(txNotes) || txNotes.includes(aNotes))) {
-                        used.add(i);
-                        return false;
-                      }
-                    }
-                  }
-                  return true;
-                });
+                selectedTransactions = deduplicateUpdateTransactions(reportTransactions, existing || []);
               } catch {
                 selectedTransactions = reportTransactions;
               }
             }
+
             const csvText = buildWealthfolioCsv(selectedTransactions);
             const lines = csvText.split(/\r?\n/).filter((line: string) => line.trim().length > 0);
             const wfHeaders = lines.length > 0 ? lines[0].split(',') : [];
@@ -435,6 +298,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
       setIsLoading(false);
     }
   };
+
 
   const handleDownload = async () => {
     if (convertedRows.length === 0 && !wealthfolioCsv) {
