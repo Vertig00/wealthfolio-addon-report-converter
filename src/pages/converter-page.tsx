@@ -72,6 +72,14 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [statusType, setStatusType] = useState<'info' | 'success' | 'warning' | 'error'>('info');
   const [tickerResolution, setTickerResolution] = useState<TickerResolutionView | null>(null);
+  const [step, setStep] = useState(0);
+  const [page, setPage] = useState(0);
+  const [rawPage, setRawPage] = useState(0);
+  const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
+  const [originalTransactions, setOriginalTransactions] = useState<any[] | null>(null);
+  const [rawSearch, setRawSearch] = useState('');
+  const [convertedSearch, setConvertedSearch] = useState('');
+  const pageSize = 50;
   const setStatus = (message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
     setStatusMessage(message);
     setStatusType(type);
@@ -138,11 +146,72 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
     setValidation({ valid: 0, warning: 0, error: 0 });
   };
 
+  const rebuildConverted = (txs: any[]) => {
+    const csvText = buildWealthfolioCsv(txs);
+    const lines = csvText.split(/\\r?\\n/).filter((line: string) => line.trim().length > 0);
+    const wfHeaders = lines.length > 0 ? lines[0].split(',') : [];
+    const wfRows = lines.slice(1).map((line: string) => {
+      const values = line.split(',');
+      const row: Record<string, string> = {};
+      wfHeaders.forEach((header: string, index: number) => {
+        row[header] = index < values.length ? values[index] : '';
+      });
+      return row;
+    });
+    setConvertedTransactions(txs);
+    setWealthfolioCsv(csvText);
+    setConvertedHeaders(wfHeaders);
+    setConvertedRows(wfRows);
+    setPage(0);
+    setSelectedRows(new Set());
+  };
+
+  const removeTransaction = (index: number) => {
+    const next = convertedTransactions.filter((_, i) => i !== index);
+    rebuildConverted(next);
+  };
+
+  const removeFile = (index: number) => {
+    const next = selectedFiles.filter((_, i) => i !== index);
+    setSelectedFiles(next);
+    if (next.length === 0) {
+      resetResults();
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    } else {
+      handleFile(next);
+    }
+  };
+
+  const toggleRowSelection = (index: number) => {
+    setSelectedRows((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
+
+  const removeSelected = () => {
+    const next = convertedTransactions.filter((_, i) => !selectedRows.has(i));
+    rebuildConverted(next);
+  };
+
+  const resetEdits = () => {
+    if (originalTransactions) rebuildConverted(originalTransactions);
+  };
+
   const startOver = () => {
     setSelectedFiles([]);
     setSelectedAccountId('');
     setSource('XTB');
     setMode('initial');
+    setStep(0);
+    setPage(0);
+    setRawPage(0);
+    setRawSearch('');
+    setConvertedSearch('');
+    setSelectedRows(new Set());
+    setOriginalTransactions(null);
     resetResults();
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -150,6 +219,9 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   const handleFile = async (selected: File[]) => {
     if (!selected || selected.length === 0) return;
     setSelectedFiles(selected);
+    setRawPage(0);
+    setRawSearch('');
+    setConvertedSearch('');
     resetResults();
     // Use the first file for raw preview and mode inference.
     const first = selected[0];
@@ -267,8 +339,10 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
             setConvertedHeaders(wfHeaders);
             setConvertedRows(wfRows);
             setStatus(tr('status.converted', { count: wfRows.length }), 'success');
+            setStep(1);
             setWealthfolioCsv(csvText);
             setConvertedTransactions(selectedTransactions);
+            setOriginalTransactions(selectedTransactions);
             if (mode === 'update') {
               if (wfRows.length === 0) setStatus(tr('update.noNew'), 'warning');
               else {
@@ -345,6 +419,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
         setStatus(tr('import.returnedErrors', { error: JSON.stringify(firstActivityError.errors) }), 'error');
       }
       setImportSummary(summary ? tr('import.summary', { imported: summary.imported, skipped: summary.skipped, duplicates: summary.duplicates }) : tr('import.completed'));
+      setStep(2);
       if (storage) {
         try {
           const raw = await storage.get('xtb.imported.operationIds.v2');
@@ -371,6 +446,12 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
     }
   };
 
+  const rawFilteredCount = rawRows.filter((row) => !rawSearch || Object.values(row).some((v) => String(v ?? '').toLowerCase().includes(rawSearch.toLowerCase()))).length;
+  const convertedEntries = convertedRows
+    .map((row, idx) => ({ row, tx: convertedTransactions[idx], idx }))
+    .filter(({ row }) => !convertedSearch || Object.values(row).some((v) => String(v ?? '').toLowerCase().includes(convertedSearch.toLowerCase())));
+  const convertedFilteredCount = convertedEntries.length;
+
   const statusClass =
     statusType === 'success'
       ? 'border-green-500/40 bg-green-500/10 text-green-700 dark:text-green-400'
@@ -384,7 +465,31 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
     <Page>
       <PageHeader heading={tr('app.title')} text={tr('upload.description')} />
       <PageContent withPadding>
-        <Card>
+        <div className="mb-4 flex items-center gap-2">
+          {[0, 1, 2].map((s, i) => (
+            <div key={s} className="flex items-center gap-2">
+              {i > 0 && <span className="text-muted-foreground">→</span>}
+              <button
+                type="button"
+                disabled={s > step}
+                onClick={() => s <= step && setStep(s)}
+                className={`flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition-colors ${
+                  s === step
+                    ? 'bg-primary text-primary-foreground shadow'
+                    : s < step
+                      ? 'bg-primary/10 text-primary'
+                      : 'bg-muted text-muted-foreground'
+                } disabled:cursor-not-allowed disabled:opacity-50`}
+              >
+                <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs ${s === step ? 'bg-primary-foreground text-primary' : s < step ? 'bg-primary text-primary-foreground' : 'bg-muted-foreground/20 text-muted-foreground'}`}>
+                  {s < step ? '✓' : s + 1}
+                </span>
+                {s === 0 ? tr('wizard.step.setup') : s === 1 ? tr('wizard.step.review') : tr('wizard.step.export')}
+              </button>
+            </div>
+          ))}
+        </div>
+        <Card className="overflow-visible">
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle>{tr('preview.title')}</CardTitle>
             <div className="flex items-center gap-2">
@@ -401,6 +506,8 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
+            {step === 0 && (
+              <>
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <div className="space-y-2">
                 <label className="text-sm font-medium">{tr('account.label')}</label>
@@ -469,8 +576,15 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                 }}
               />
               {selectedFiles.length > 0 && (
-                <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                  {selectedFiles.length === 1 ? selectedFiles[0].name : `${selectedFiles.length} files: ${selectedFiles.map(f => f.name).join(', ')}`}
+                <div className="flex flex-wrap gap-2">
+                  {selectedFiles.map((f, idx) => (
+                    <div key={idx} className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                      <span className="max-w-[200px] truncate">{f.name}</span>
+                      <button type="button" className="text-muted-foreground hover:text-destructive" onClick={() => removeFile(idx)}>
+                        ×
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -482,6 +596,8 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
             )}
 
             {isLoading && <Skeleton className="h-6 w-32" />}
+              </>
+            )}
 
             <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2">
               <div className="space-y-0.5">
@@ -498,21 +614,34 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
               />
             )}
 
+            {step === 1 && (
+              <>
             {advanced && rawRows.length > 0 && (
               <div className="space-y-2">
                 <h3 className="text-sm font-medium">{tr('raw.title')}</h3>
-                <div className="overflow-auto rounded-md border border-border max-h-[420px]">
+                <Input
+                  placeholder={tr('search.placeholder')}
+                  value={rawSearch}
+                  onChange={(e) => { setRawSearch(e.target.value); setRawPage(0); }}
+                />
+                <div className="rounded-md border border-border" style={{ maxHeight: '420px', overflowY: 'scroll' }}>
                   <Table>
                     <TableHeader>
                       <TableRow>
+                        <TableHead className="whitespace-nowrap">#</TableHead>
                         {rawHeaders.map((h, i) => (
                           <TableHead key={i} className="whitespace-nowrap">{h}</TableHead>
                         ))}
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {rawRows.slice(0, 100).map((row, idx) => (
+                      {rawRows
+                        .map((row, idx) => ({ row, idx }))
+                        .filter(({ row }) => !rawSearch || Object.values(row).some((v) => String(v ?? '').toLowerCase().includes(rawSearch.toLowerCase())))
+                        .slice(rawPage * pageSize, (rawPage + 1) * pageSize)
+                        .map(({ row, idx }) => (
                         <TableRow key={idx}>
+                          <TableCell className="whitespace-nowrap">{idx + 1}</TableCell>
                           {rawHeaders.map((h, i) => (
                             <TableCell key={i} className="max-w-xs truncate">{row[h] ?? ''}</TableCell>
                           ))}
@@ -520,47 +649,169 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                       ))}
                     </TableBody>
                   </Table>
-                  {rawRows.length > 100 && (
-                    <div className="px-4 py-2 text-sm text-muted-foreground">
-                      {tr('preview.moreRows', { count: rawRows.length - 100 })}
+                  <div className="flex items-center justify-between px-4 py-2 text-sm text-muted-foreground">
+                    <span>{tr('preview.rows', { count: rawRows.filter((row) => !rawSearch || Object.values(row).some((v) => String(v ?? '').toLowerCase().includes(rawSearch.toLowerCase()))).length })}</span>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" disabled={rawPage === 0} onClick={() => setRawPage((p) => Math.max(0, p - 1))}>
+                        {tr('pagination.prev')}
+                      </Button>
+                      <span>
+                        {rawPage + 1} / {Math.max(1, Math.ceil(rawFilteredCount / pageSize))}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={rawPage >= Math.ceil(rawFilteredCount / pageSize) - 1}
+                        onClick={() => setRawPage((p) => Math.min(Math.ceil(rawFilteredCount / pageSize) - 1, p + 1))}
+                      >
+                        {tr('pagination.next')}
+                      </Button>
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
             )}
 
             {convertedRows.length > 0 && (
               <div className="space-y-2">
-                <h3 className="text-sm font-medium">{tr('converted.title')}</h3>
-                <div className="overflow-auto rounded-md border border-border max-h-[420px]">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-medium">{tr('converted.title')}</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setSelectedRows(new Set(convertedEntries.map((e) => e.idx)))}>
+                      Select all
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={removeSelected} disabled={selectedRows.size === 0}>
+                      Remove selected ({selectedRows.size})
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={resetEdits} disabled={!originalTransactions}>
+                      Reset edits
+                    </Button>
+                  </div>
+                </div>
+                <Input
+                  placeholder={tr('search.placeholder')}
+                  value={convertedSearch}
+                  onChange={(e) => { setConvertedSearch(e.target.value); setPage(0); }}
+                />
+                <div className="rounded-md border border-border" style={{ maxHeight: '480px', overflowY: 'scroll' }}>
                   <Table>
-                    <TableHeader>
+                    <TableHeader className="sticky top-0 z-10 bg-background">
                       <TableRow>
+                        <TableHead className="whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={convertedEntries.slice(page * pageSize, (page + 1) * pageSize).length > 0 && convertedEntries.slice(page * pageSize, (page + 1) * pageSize).every((e) => selectedRows.has(e.idx))}
+                            onChange={(e) => {
+                              const pageEntries = convertedEntries.slice(page * pageSize, (page + 1) * pageSize);
+                              setSelectedRows((prev) => {
+                                const next = new Set(prev);
+                                if (e.target.checked) pageEntries.forEach((en) => next.add(en.idx));
+                                else pageEntries.forEach((en) => next.delete(en.idx));
+                                return next;
+                              });
+                            }}
+                          />
+                        </TableHead>
+                        <TableHead className="whitespace-nowrap">#</TableHead>
                         {convertedHeaders.map((h, i) => (
                           <TableHead key={i} className="whitespace-nowrap">{h}</TableHead>
                         ))}
+                        <TableHead className="whitespace-nowrap">Status</TableHead>
+                        <TableHead className="whitespace-nowrap">{tr('review.remove')}</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {convertedRows.slice(0, 100).map((row, idx) => (
-                        <TableRow key={idx}>
-                          {convertedHeaders.map((h, i) => (
-                            <TableCell key={i} className="max-w-xs truncate">{row[h] ?? ''}</TableCell>
-                          ))}
+                      {convertedEntries.slice(page * pageSize, (page + 1) * pageSize).map((entry) => {
+                        const globalIdx = entry.idx;
+                        const row = entry.row;
+                        return (
+                        <TableRow key={globalIdx}>
+                          <TableCell>
+                            <input
+                              type="checkbox"
+                              checked={selectedRows.has(globalIdx)}
+                              onChange={() => toggleRowSelection(globalIdx)}
+                            />
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">{globalIdx + 1}</TableCell>
+                          {convertedHeaders.map((h, i) => {
+                            const field = h === 'quantity' ? 'quantity' : h === 'unitPrice' ? 'price' : h === 'amount' ? 'amount' : null;
+                            if (field) {
+                              return (
+                                <TableCell key={i}>
+                                  <Input
+                                    type="number"
+                                    className="h-8 w-24"
+                                    value={convertedTransactions[globalIdx]?.[field] ?? ''}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      const next = convertedTransactions.map((tx, i2) =>
+                                        i2 === globalIdx ? { ...tx, [field]: val === '' ? undefined : Number(val) } : tx
+                                      );
+                                      rebuildConverted(next);
+                                    }}
+                                  />
+                                </TableCell>
+                              );
+                            }
+                            return <TableCell key={i} className="max-w-xs truncate">{row[h] ?? ''}</TableCell>;
+                          })}
+                          <TableCell>
+                            {(() => {
+                              const tx = convertedTransactions[globalIdx];
+                              const op = tx?.operationType;
+                              const ok = op === 'BUY' || op === 'SELL' ? (Number(tx?.quantity) > 0 && Number(tx?.price) > 0) : true;
+                              const reconciled = !!tx?.metadata?.reconciledFromOpenPositions;
+                              return (
+                                <span className={ok ? 'text-green-600' : 'text-yellow-600'}>
+                                  {ok ? '✓' : '⚠'} {reconciled ? '★' : ''}
+                                </span>
+                              );
+                            })()}
+                          </TableCell>
+                          <TableCell>
+                            <Button variant="ghost" size="sm" onClick={() => removeTransaction(globalIdx)}>
+                              {tr('review.remove')}
+                            </Button>
+                          </TableCell>
                         </TableRow>
-                      ))}
+                        );
+                      })}
                     </TableBody>
                   </Table>
-                  {convertedRows.length > 100 && (
-                    <div className="px-4 py-2 text-sm text-muted-foreground">
-                      {tr('preview.moreRows', { count: convertedRows.length - 100 })}
+                  <div className="flex items-center justify-between px-4 py-2 text-sm text-muted-foreground">
+                    <span>{tr('preview.rows', { count: convertedFilteredCount })}</span>
+                    <div className="flex items-center gap-2">
+                      <Button variant="outline" size="sm" disabled={page === 0} onClick={() => setPage((p) => Math.max(0, p - 1))}>
+                        {tr('pagination.prev')}
+                      </Button>
+                      <span>
+                        {page + 1} / {Math.max(1, Math.ceil(convertedFilteredCount / pageSize))}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={page >= Math.ceil(convertedFilteredCount / pageSize) - 1}
+                        onClick={() => setPage((p) => Math.min(Math.ceil(convertedFilteredCount / pageSize) - 1, p + 1))}
+                      >
+                        {tr('pagination.next')}
+                      </Button>
                     </div>
-                  )}
+                  </div>
                 </div>
               </div>
             )}
 
-            {convertedRows.length > 0 && (
+              </>
+            )}
+
+            {step === 1 && convertedRows.length > 0 && (
+              <div className="flex flex-wrap items-center gap-3">
+                <Button onClick={() => setStep(2)}>{tr('wizard.step.export')}</Button>
+              </div>
+            )}
+
+            {step === 2 && convertedRows.length > 0 && (
               <div className="flex flex-wrap items-center gap-3">
                 <Button onClick={handleDownload}>
                   {tr('export.download')}
