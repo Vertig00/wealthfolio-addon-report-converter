@@ -77,6 +77,9 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   const [rawPage, setRawPage] = useState(0);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [originalTransactions, setOriginalTransactions] = useState<any[] | null>(null);
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [confirmUnderstood, setConfirmUnderstood] = useState(false);
   const [rawSearch, setRawSearch] = useState('');
   const [convertedSearch, setConvertedSearch] = useState('');
   const pageSize = 50;
@@ -212,6 +215,9 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
     setConvertedSearch('');
     setSelectedRows(new Set());
     setOriginalTransactions(null);
+    setTypeFilter('all');
+    setStatusFilter('all');
+    setConfirmUnderstood(false);
     resetResults();
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -449,7 +455,17 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   const rawFilteredCount = rawRows.filter((row) => !rawSearch || Object.values(row).some((v) => String(v ?? '').toLowerCase().includes(rawSearch.toLowerCase()))).length;
   const convertedEntries = convertedRows
     .map((row, idx) => ({ row, tx: convertedTransactions[idx], idx }))
-    .filter(({ row }) => !convertedSearch || Object.values(row).some((v) => String(v ?? '').toLowerCase().includes(convertedSearch.toLowerCase())));
+    .filter(({ row, tx }) => {
+      if (convertedSearch && !Object.values(row).some((v) => String(v ?? '').toLowerCase().includes(convertedSearch.toLowerCase()))) return false;
+      if (typeFilter !== 'all' && String(tx?.operationType) !== typeFilter) return false;
+      if (statusFilter !== 'all') {
+        const op = tx?.operationType;
+        const ok = op === 'BUY' || op === 'SELL' ? (Number(tx?.quantity) > 0 && Number(tx?.price) > 0) : true;
+        if (statusFilter === 'ok' && !ok) return false;
+        if (statusFilter === 'warning' && ok) return false;
+      }
+      return true;
+    });
   const convertedFilteredCount = convertedEntries.length;
 
   const statusClass =
@@ -693,6 +709,49 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                   value={convertedSearch}
                   onChange={(e) => { setConvertedSearch(e.target.value); setPage(0); }}
                 />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Select value={typeFilter} onValueChange={(v) => { setTypeFilter(v); setPage(0); }}>
+                    <SelectTrigger className="w-[160px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All types</SelectItem>
+                      {[...new Set(convertedTransactions.map((t: any) => t.operationType))].map((t: string) => (
+                        <SelectItem key={t} value={t}>{t}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(0); }}>
+                    <SelectTrigger className="w-[160px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All statuses</SelectItem>
+                      <SelectItem value="ok">OK</SelectItem>
+                      <SelectItem value="warning">Warning</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {(() => {
+                  const reconciled = convertedTransactions.filter((t: any) => t.metadata?.reconciledFromOpenPositions).length;
+                  const unresolved = tickerResolution?.unresolved.length ?? 0;
+                  const warnings = convertedTransactions.filter((t: any) => {
+                    const op = t.operationType;
+                    return (op === 'BUY' || op === 'SELL') && !(Number(t.quantity) > 0 && Number(t.price) > 0);
+                  }).length;
+                  if (!reconciled && !unresolved && !warnings) return null;
+                  return (
+                    <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-sm">
+                      <p className="font-medium">Diagnostics</p>
+                      <ul className="mt-1 list-disc pl-5">
+                        {reconciled > 0 && <li>{reconciled} promotional share(s) added automatically.</li>}
+                        {unresolved > 0 && <li>{unresolved} ticker(s) could not be resolved.</li>}
+                        {warnings > 0 && <li>{warnings} row(s) with missing quantity/price.</li>}
+                      </ul>
+                    </div>
+                  );
+                })()}
                 <div className="rounded-md border border-border" style={{ maxHeight: '480px', overflowY: 'scroll' }}>
                   <Table>
                     <TableHeader className="sticky top-0 z-10 bg-background">
@@ -812,17 +871,31 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
             )}
 
             {step === 2 && convertedRows.length > 0 && (
-              <div className="flex flex-wrap items-center gap-3">
-                <Button onClick={handleDownload}>
-                  {tr('export.download')}
-                </Button>
-                <Button onClick={handleImportClick} disabled={isImporting || !selectedAccountId}>
-                  {isImporting ? tr('import.importing') : tr('import.button')}
-                </Button>
+              <>
+                <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+                  <p className="font-medium">Import summary</p>
+                  <p>Records: {convertedTransactions.length}</p>
+                  <p>Types: {[...new Set(convertedTransactions.map((t: any) => t.operationType))].join(', ')}</p>
+                  <p>Currencies: {[...new Set(convertedTransactions.map((t: any) => t.currency))].join(', ')}</p>
+                </div>
+                {mode === 'initial' && (
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={confirmUnderstood} onChange={(e) => setConfirmUnderstood(e.target.checked)} />
+                    I understand initial import deletes all existing activities in the selected account.
+                  </label>
+                )}
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button onClick={handleDownload}>
+                    {tr('export.download')}
+                  </Button>
+                  <Button onClick={handleImportClick} disabled={isImporting || !selectedAccountId || (mode === 'initial' && !confirmUnderstood)}>
+                    {isImporting ? tr('import.importing') : tr('import.button')}
+                  </Button>
                 {validation.valid > 0 && <Badge variant="success">{validation.valid} {tr('validation.valid')}</Badge>}
                 {validation.warning > 0 && <Badge variant="warning">{validation.warning} {tr('validation.warning')}</Badge>}
                 {validation.error > 0 && <Badge variant="destructive">{validation.error} {tr('validation.error')}</Badge>}
               </div>
+              </>
             )}
 
             {statusMessage && (
