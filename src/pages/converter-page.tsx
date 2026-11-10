@@ -80,6 +80,11 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [confirmUnderstood, setConfirmUnderstood] = useState(false);
+  const [history, setHistory] = useState<any[][]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [hasDraft, setHasDraft] = useState(false);
+  const [exportSeparator, setExportSeparator] = useState(',');
+  const [exportFilename, setExportFilename] = useState('XTB_wealthfolio.csv');
   const [rawSearch, setRawSearch] = useState('');
   const [convertedSearch, setConvertedSearch] = useState('');
   const pageSize = 50;
@@ -128,6 +133,18 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   }, [convertedRows]);
 
   useEffect(() => {
+    if (!storage) return;
+    storage.get('draft.transactions').then((raw: string | null) => {
+      if (raw) setHasDraft(true);
+    }).catch(() => undefined);
+  }, [storage]);
+
+  useEffect(() => {
+    if (!storage || convertedTransactions.length === 0) return;
+    storage.set('draft.transactions', JSON.stringify(convertedTransactions)).catch(() => undefined);
+  }, [convertedTransactions, storage]);
+
+  useEffect(() => {
     if (!accounts) return;
     accounts.getAll().then((result: any[]) => {
       setAccountList(result || []);
@@ -149,12 +166,12 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
     setValidation({ valid: 0, warning: 0, error: 0 });
   };
 
-  const rebuildConverted = (txs: any[]) => {
-    const csvText = buildWealthfolioCsv(txs);
+  const rebuildConverted = (txs: any[], pushHistory: boolean = true) => {
+    const csvText = buildWealthfolioCsv(txs, exportSeparator);
     const lines = csvText.split(/\\r?\\n/).filter((line: string) => line.trim().length > 0);
-    const wfHeaders = lines.length > 0 ? lines[0].split(',') : [];
+    const wfHeaders = lines.length > 0 ? lines[0].split(exportSeparator) : [];
     const wfRows = lines.slice(1).map((line: string) => {
-      const values = line.split(',');
+      const values = line.split(exportSeparator);
       const row: Record<string, string> = {};
       wfHeaders.forEach((header: string, index: number) => {
         row[header] = index < values.length ? values[index] : '';
@@ -167,6 +184,26 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
     setConvertedRows(wfRows);
     setPage(0);
     setSelectedRows(new Set());
+    if (pushHistory) {
+      const newHistory = history.slice(0, historyIndex + 1).concat([txs]);
+      setHistory(newHistory);
+      setHistoryIndex(newHistory.length - 1);
+    }
+  };
+
+  const undo = () => {
+    if (historyIndex > 0) {
+      const newIndex = historyIndex - 1;
+      setHistoryIndex(newIndex);
+      rebuildConverted(history[newIndex], false);
+    }
+  };
+  const redo = () => {
+    if (historyIndex < history.length - 1) {
+      const newIndex = historyIndex + 1;
+      setHistoryIndex(newIndex);
+      rebuildConverted(history[newIndex], false);
+    }
   };
 
   const removeTransaction = (index: number) => {
@@ -203,6 +240,20 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
     if (originalTransactions) rebuildConverted(originalTransactions);
   };
 
+  const restoreDraft = async () => {
+    if (!storage) return;
+    try {
+      const raw = await storage.get('draft.transactions');
+      if (raw) {
+        const txs = JSON.parse(raw);
+        rebuildConverted(txs);
+        setStep(1);
+      }
+    } catch {
+      // ignore
+    }
+  };
+
   const startOver = () => {
     setSelectedFiles([]);
     setSelectedAccountId('');
@@ -215,6 +266,8 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
     setConvertedSearch('');
     setSelectedRows(new Set());
     setOriginalTransactions(null);
+    setHistory([]);
+    setHistoryIndex(-1);
     setTypeFilter('all');
     setStatusFilter('all');
     setConfirmUnderstood(false);
@@ -349,6 +402,8 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
             setWealthfolioCsv(csvText);
             setConvertedTransactions(selectedTransactions);
             setOriginalTransactions(selectedTransactions);
+            setHistory([selectedTransactions]);
+            setHistoryIndex(0);
             if (mode === 'update') {
               if (wfRows.length === 0) setStatus(tr('update.noNew'), 'warning');
               else {
@@ -386,8 +441,8 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
       return;
     }
     try {
-      const csvContent = wealthfolioCsv || convertedRows.map((row: any) => Object.values(row).map(v => String(v ?? '').includes(',') ? `"${String(v ?? '')}"` : String(v ?? '')).join(',')).join('\n');
-      await files.openSaveDialog(csvContent, source + '_wealthfolio.csv');
+      const csvContent = wealthfolioCsv || convertedRows.map((row: any) => Object.values(row).map(v => String(v ?? '').includes(exportSeparator) ? `"${String(v ?? '')}"` : String(v ?? '')).join(exportSeparator)).join('\n');
+      await files.openSaveDialog(csvContent, exportFilename);
     } catch (e) {
       setStatus(tr('export.error') + ': ' + (e instanceof Error ? e.message : String(e)), 'error');
     }
@@ -611,6 +666,12 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
               </Button>
             )}
 
+            {hasDraft && (
+              <Button variant="outline" onClick={restoreDraft}>
+                Restore draft
+              </Button>
+            )}
+
             {isLoading && <Skeleton className="h-6 w-32" />}
               </>
             )}
@@ -693,6 +754,12 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-sm font-medium">{tr('converted.title')}</h3>
                   <div className="flex flex-wrap items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={undo} disabled={historyIndex <= 0}>
+                      Undo
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={redo} disabled={historyIndex >= history.length - 1}>
+                      Redo
+                    </Button>
                     <Button variant="outline" size="sm" onClick={() => setSelectedRows(new Set(convertedEntries.map((e) => e.idx)))}>
                       Select all
                     </Button>
@@ -877,6 +944,19 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                   <p>Records: {convertedTransactions.length}</p>
                   <p>Types: {[...new Set(convertedTransactions.map((t: any) => t.operationType))].join(', ')}</p>
                   <p>Currencies: {[...new Set(convertedTransactions.map((t: any) => t.currency))].join(', ')}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input value={exportFilename} onChange={(e) => setExportFilename(e.target.value)} className="w-48" />
+                  <Select value={exportSeparator} onValueChange={(v) => setExportSeparator(v)}>
+                    <SelectTrigger className="w-24">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value=",">,</SelectItem>
+                      <SelectItem value=";">;</SelectItem>
+                      <SelectItem value="\t">Tab</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
                 {mode === 'initial' && (
                   <label className="flex items-center gap-2 text-sm">
