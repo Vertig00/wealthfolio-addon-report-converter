@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { readXLSXFile, readCSVFile } from '../lib/file-readers';
-import { buildWealthfolioCsv, toActivityImport, getWealthfolioSymbol } from '../lib/sources/xtb';
+import { buildWealthfolioCsv, toActivityImport } from '../lib/sources/xtb';
 import { deduplicateUpdateTransactions } from '../lib/sources/xtb/dedup';
 import { convertXTBFiles } from '../lib/sources/xtb/report-converter';
 import type { TickerResolutionView } from '../lib/sources/xtb/report-converter';
@@ -795,25 +795,6 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                           <TableCell className="whitespace-nowrap">{globalIdx + 1}</TableCell>
                           {convertedHeaders.map((h, i) => {
                             const field = h === 'quantity' ? 'quantity' : h === 'unitPrice' ? 'price' : h === 'amount' ? 'amount' : null;
-                            const isSymbol = h === 'symbol';
-                            if (isSymbol) {
-                              return (
-                                <TableCell key={i}>
-                                  <Input
-                                    type="text"
-                                    className="h-8 w-32"
-                                    value={getWealthfolioSymbol(convertedTransactions[globalIdx] ?? {} as any)}
-                                    onChange={(e) => {
-                                      const val = e.target.value;
-                                      const next = convertedTransactions.map((tx, i2) =>
-                                        i2 === globalIdx ? { ...tx, metadata: { ...(tx.metadata || {}), resolvedSymbol: val } } : tx
-                                      );
-                                      rebuildConverted(next);
-                                    }}
-                                  />
-                                </TableCell>
-                              );
-                            }
                             if (field) {
                               return (
                                 <TableCell key={i}>

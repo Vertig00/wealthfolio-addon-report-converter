@@ -24,6 +24,15 @@ const OPERATION_MAP: Record<string, OperationType> = {
   'Correction': 'ADJUSTMENT',
 };
 
+const WSE_SYMBOL_ALIASES: Record<string, string> = {
+  CCC: 'MDV',
+  K2H: 'FAB',
+};
+
+function mapWseBase(base: string): string {
+  return WSE_SYMBOL_ALIASES[base.toUpperCase()] || base;
+}
+
 const XTB_SYMBOL_SUFFIX_MAP: Record<string, string> = {
   PL: 'WA',
   WA: 'WA',
@@ -40,7 +49,8 @@ export function mapXTBSymbol(ticker: string): string {
   const mappedSuffix = XTB_SYMBOL_SUFFIX_MAP[suffix];
   if (mappedSuffix === undefined) return ticker;
   const base = ticker.slice(0, dot);
-  return mappedSuffix ? `${base}.${mappedSuffix}` : base;
+  const mappedBase = suffix === 'PL' || suffix === 'WA' ? mapWseBase(base) : base;
+  return mappedSuffix ? `${mappedBase}.${mappedSuffix}` : mappedBase;
 }
 
 export function getWealthfolioSymbol(tx: Pick<TransactionRecord, 'ticker' | 'metadata'>): string {
