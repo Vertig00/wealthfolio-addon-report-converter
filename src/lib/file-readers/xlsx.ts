@@ -1,4 +1,4 @@
-import { read } from 'xlsx';
+import { read, utils } from 'xlsx';
 
 export interface XLSXSheet {
   name: string;
@@ -12,29 +12,25 @@ export function readXLSXSheets(workbook: any): XLSXSheet[] {
     const ws = workbook.Sheets[name];
     const rows: any[] = [];
 
-    // Find all used rows
-    let maxRow = 0;
-    for (const key in ws) {
-      if (key.startsWith('!')) continue;
-      const match = key.match(/^([A-Z]+)(\d+)$/);
-      if (match) {
-        const rowNum = parseInt(match[2], 10);
-        if (rowNum > maxRow) maxRow = rowNum;
-      }
-    }
+    const range = ws['!ref'] ? utils.decode_range(ws['!ref']) : null;
+    const maxRow = range ? range.e.r + 1 : 0;
+    const maxCol = range ? Math.min(range.e.c + 1, 50) : 20;
 
     for (let row = 1; row <= maxRow; row++) {
       const rowData: any[] = [];
-      for (let col = 1; col <= 20; col++) {
-        const cellKey = String.fromCharCode(64 + col) + row;
+      let hasContent = false;
+      for (let col = 0; col < maxCol; col++) {
+        const cellKey = utils.encode_cell({ r: row - 1, c: col });
         if (ws[cellKey]) {
-          rowData.push(ws[cellKey].v);
+          const value = ws[cellKey].v;
+          rowData.push(value);
+          if (value !== '' && value !== undefined && value !== null) hasContent = true;
         } else {
           rowData.push('');
         }
       }
-      // Only add row if it has some content
-      if (rowData.some(cell => cell !== '' && cell !== undefined)) {
+      // Only add row if it has some content, preserving prior behaviour.
+      if (hasContent) {
         rows.push(rowData);
       }
     }

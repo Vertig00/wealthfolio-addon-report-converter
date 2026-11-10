@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { readXLSXFile, readCSVFile } from '../lib/file-readers';
-import { parseXTBReport, buildWealthfolioCsv, toActivityImport } from '../lib/sources/xtb';
+import { buildWealthfolioCsv, toActivityImport } from '../lib/sources/xtb';
+import { deduplicateUpdateTransactions } from '../lib/sources/xtb/dedup';
+import { convertXTBFiles } from '../lib/sources/xtb/report-converter';
+import type { TickerResolutionView } from '../lib/sources/xtb/report-converter';
 import { SearchableIconSelect } from '../components/searchable-icon-select';
 import { TrendingUp, Wallet, CreditCard, Bitcoin, Building2 } from 'lucide-react';
 import {
@@ -27,6 +30,7 @@ import {
   Badge,
   EmptyPlaceholder,
   Skeleton,
+  Switch,
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -45,25 +49,29 @@ function formatDate(d: any): string {
   return String(d);
 }
 
-export function ConverterPage({ t, files, storage, accounts, activities, navigation }: { t: Translate; files: any; storage: any; accounts: any; activities: any; navigation: any }) {
+export function ConverterPage({ t, files, storage, accounts, activities, market, navigation }: { t: Translate; files: any; storage: any; accounts: any; activities: any; market?: any; navigation: any }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [language, setLanguage] = useState<'en' | 'pl'>('en');
   const [accountList, setAccountList] = useState<any[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string>('');
-  const [file, setFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [source, setSource] = useState<'XTB' | 'mBank'>('XTB');
   const [mode, setMode] = useState<'initial' | 'update'>('initial');
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [validation, setValidation] = useState<{ valid: number; warning: number; error: number }>({ valid: 0, warning: 0, error: 0 });
-  const [rows, setRows] = useState<any[]>([]);
-  const [headers, setHeaders] = useState<string[]>([]);
+  const [rawRows, setRawRows] = useState<any[]>([]);
+  const [rawHeaders, setRawHeaders] = useState<string[]>([]);
+  const [convertedRows, setConvertedRows] = useState<any[]>([]);
+  const [convertedHeaders, setConvertedHeaders] = useState<string[]>([]);
+  const [advanced, setAdvanced] = useState<boolean>(false);
   const [wealthfolioCsv, setWealthfolioCsv] = useState<string>('');
   const [convertedTransactions, setConvertedTransactions] = useState<any[]>([]);
   const [importSummary, setImportSummary] = useState<string>('');
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [statusType, setStatusType] = useState<'info' | 'success' | 'warning' | 'error'>('info');
+  const [tickerResolution, setTickerResolution] = useState<TickerResolutionView | null>(null);
   const setStatus = (message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info') => {
     setStatusMessage(message);
     setStatusType(type);
@@ -79,6 +87,18 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
     }).catch(() => undefined);
   }, [storage]);
 
+  useEffect(() => {
+    if (!storage) return;
+    storage.get('ui.advanced').then((value: string | null) => {
+      if (value === 'true') setAdvanced(true);
+    }).catch(() => undefined);
+  }, [storage]);
+
+  const handleAdvancedChange = (value: boolean) => {
+    setAdvanced(value);
+    storage?.set('ui.advanced', String(value)).catch(() => undefined);
+  };
+
   const handleLanguageChange = (value: string) => {
     const next = value === 'pl' ? 'pl' : 'en';
     setLanguage(next);
@@ -88,13 +108,13 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
   useEffect(() => {
     let valid = 0;
     let errorCount = 0;
-    for (const row of rows) {
+    for (const row of convertedRows) {
       const hasData = Object.values(row).some(v => v != null && v !== '');
       if (hasData) valid++;
       else errorCount++;
     }
     setValidation({ valid, warning: 0, error: errorCount });
-  }, [rows]);
+  }, [convertedRows]);
 
   useEffect(() => {
     if (!accounts) return;
@@ -105,18 +125,21 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
   }, [accounts]);
 
   const resetResults = () => {
-    setRows([]);
-    setHeaders([]);
+    setRawRows([]);
+    setRawHeaders([]);
+    setConvertedRows([]);
+    setConvertedHeaders([]);
     setWealthfolioCsv('');
     setConvertedTransactions([]);
     setImportSummary('');
     setStatus('');
     setStatusType('info');
+    setTickerResolution(null);
     setValidation({ valid: 0, warning: 0, error: 0 });
   };
 
   const startOver = () => {
-    setFile(null);
+    setSelectedFiles([]);
     setSelectedAccountId('');
     setSource('XTB');
     setMode('initial');
@@ -124,13 +147,47 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const handleFile = async (selected: File) => {
-    setFile(selected);
+  const handleFile = async (selected: File[]) => {
+    if (!selected || selected.length === 0) return;
+    setSelectedFiles(selected);
     resetResults();
-    const name = selected.name.toLowerCase();
-    if (name.endsWith('.xlsx')) {
+    // Use the first file for raw preview and mode inference.
+    const first = selected[0];
+    const name = first.name.toLowerCase();
+    if (name.endsWith('.csv')) {
       try {
-        const xlsxResult = await readXLSXFile(selected);
+        const csvResult = await readCSVFile(first);
+        if (!csvResult.errors || csvResult.errors.length === 0) {
+          setRawHeaders(csvResult.headers || []);
+          setRawRows(csvResult.rows || []);
+        }
+      } catch {
+        // Keep raw preview empty if reading fails.
+      }
+    } else if (name.endsWith('.xlsx')) {
+      try {
+        const xlsxResult = await readXLSXFile(first);
+        if (!xlsxResult.error && xlsxResult.sheets && xlsxResult.sheets.length > 0) {
+          const cashSheet = xlsxResult.sheets.find((sh: any) => sh.name === 'Cash Operations');
+          const sheet = cashSheet || xlsxResult.sheets[0];
+          if (sheet && Array.isArray(sheet.rows) && sheet.rows.length > 0) {
+            const isCash = sheet.name === 'Cash Operations';
+            const headerIndex = isCash && sheet.rows.length >= 5 ? 4 : 0;
+            const rawHeadersRow = sheet.rows[headerIndex] || [];
+            let lastHeader = rawHeadersRow.length - 1;
+            while (lastHeader >= 0 && (rawHeadersRow[lastHeader] === '' || rawHeadersRow[lastHeader] == null)) lastHeader -= 1;
+            const headers = rawHeadersRow.slice(0, lastHeader + 1);
+            const dataRows = sheet.rows.slice(headerIndex + 1).map((row: any[]) => {
+              const obj: Record<string, any> = {};
+              headers.forEach((header: any, index: number) => {
+                obj[String(header ?? index)] = index < row.length ? row[index] : '';
+              });
+              return obj;
+            });
+            setRawHeaders(headers);
+            setRawRows(dataRows);
+          }
+        }
         const cashSheet = xlsxResult.sheets.find((sh: any) => sh.name === 'Cash Operations');
         if (cashSheet && cashSheet.rows.length >= 4) {
           const fromSerial = Number(cashSheet.rows[2][1]);
@@ -148,94 +205,54 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
   const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragging(false);
-    const selected = e.dataTransfer.files?.[0];
-    if (selected) handleFile(selected);
+    const selected = Array.from(e.dataTransfer.files || []);
+    if (selected.length > 0) handleFile(selected);
   };
 
   const handleConvert = async () => {
-    if (!file) return;
+    if (selectedFiles.length === 0) return;
     setIsLoading(true);
-    resetResults();
-    const name = file.name.toLowerCase();
+    setConvertedRows([]);
+    setConvertedHeaders([]);
+    setWealthfolioCsv('');
+    setConvertedTransactions([]);
+    setImportSummary('');
+    setStatus('', 'info');
+    setTickerResolution(null);
+    setValidation({ valid: 0, warning: 0, error: 0 });
+    const name = selectedFiles[0].name.toLowerCase();
     try {
       if (name.endsWith('.csv')) {
-        const csvResult = await readCSVFile(file);
+        const csvResult = await readCSVFile(selectedFiles[0]);
         if (csvResult.errors.length > 0) {
           setValidation({ valid: 0, warning: 0, error: csvResult.errors.length });
           setStatus(tr('error.invalidCSV'), 'error');
         } else {
-          setHeaders(csvResult.headers);
-          setRows(csvResult.rows);
+          setConvertedHeaders(csvResult.headers);
+          setConvertedRows(csvResult.rows);
           setStatus(tr('status.converted', { count: csvResult.rows.length }), 'success');
         }
       } else if (name.endsWith('.xlsx')) {
         if (source === 'XTB') {
-          const xtbResult = await parseXTBReport(file, mode);
-          if (xtbResult.error) {
+          // Parse all selected files and merge, deduplicating by XTB operation id.
+          const conversion = await convertXTBFiles(selectedFiles, mode, market, tr);
+          if (conversion.firstError && conversion.transactions.length === 0) {
             setValidation({ valid: 0, warning: 0, error: 1 });
-            setStatus(xtbResult.error, 'error');
+            setStatus(conversion.firstError, 'error');
           } else {
-            const reportTransactions = xtbResult.transactions || [];
+            const reportTransactions = conversion.transactions;
+            setTickerResolution(conversion.tickerResolution);
+
             let selectedTransactions = reportTransactions;
-            let existingActivities: any[] = [];
             if (mode === 'update' && activities && selectedAccountId) {
               try {
                 const existing = await activities.getAll(selectedAccountId);
-                existingActivities = existing || [];
-                const used = new Set<number>();
-                const norm = (v: any) => {
-                  const n = Number(v);
-                  return isNaN(n) ? String(v ?? '') : n.toFixed(6);
-                };
-                const mapSymbol = (ticker: string) => {
-                  if (ticker.endsWith('.PL')) return ticker.slice(0, -3) + '.WA';
-                  if (ticker.endsWith('.UK')) return ticker.slice(0, -3) + '.L';
-                  return ticker;
-                };
-                const isCashTx = (tx: any) => tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL' || String(tx.ticker || '').startsWith('$CASH');
-                const txKey = (tx: any) => {
-                  const date = tx.date instanceof Date ? tx.date.toISOString().split('T')[0] : String(tx.date).split('T')[0];
-                  const amt = norm(tx.amount);
-                  const curr = tx.currency;
-                  if (isCashTx(tx)) return `CASH|${tx.operationType}|${date}|${amt}|${curr}`;
-                  const symbol = mapSymbol(String(tx.ticker || ''));
-                  const baseSymbol = symbol.replace(/\.(WA|L|DE|FR)$/i, '');
-                  const qty = norm(tx.quantity);
-                  return `TRADE|${tx.operationType}|${date}|${baseSymbol}|${qty}|${curr}`;
-                };
-                const isCashActivity = (a: any) => a.activityType === 'INTEREST' || a.activityType === 'DEPOSIT' || a.activityType === 'WITHDRAWAL' || !a.assetSymbol;
-                const activityKey = (a: any) => {
-                  const date = a.date instanceof Date ? a.date.toISOString().split('T')[0] : String(a.date).split('T')[0];
-                  const amt = norm(a.amount);
-                  const curr = a.currency;
-                  if (isCashActivity(a)) return `CASH|${a.activityType}|${date}|${amt}|${curr}`;
-                  const qty = norm(a.quantity);
-                  const baseAssetSymbol = String(a.assetSymbol || '').replace(/\.(WA|L|DE|FR)$/i, '');
-                  return `TRADE|${a.activityType}|${date}|${baseAssetSymbol}|${qty}|${curr}`;
-                };
-                const activityKeys = (existingActivities).map((a: any) => activityKey(a));
-                selectedTransactions = reportTransactions.filter((tx: any) => {
-                  for (let i = 0; i < existingActivities.length; i++) {
-                    if (used.has(i)) continue;
-                    if (existingActivities[i].sourceRecordId && String(existingActivities[i].sourceRecordId) === String(tx.id)) {
-                      used.add(i);
-                      return false;
-                    }
-                  }
-                  const key = txKey(tx);
-                  for (let i = 0; i < activityKeys.length; i++) {
-                    if (used.has(i)) continue;
-                    if (activityKeys[i] === key) {
-                      used.add(i);
-                      return false;
-                    }
-                  }
-                  return true;
-                });
+                selectedTransactions = deduplicateUpdateTransactions(reportTransactions, existing || []);
               } catch {
                 selectedTransactions = reportTransactions;
               }
             }
+
             const csvText = buildWealthfolioCsv(selectedTransactions);
             const lines = csvText.split(/\r?\n/).filter((line: string) => line.trim().length > 0);
             const wfHeaders = lines.length > 0 ? lines[0].split(',') : [];
@@ -247,8 +264,8 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
               });
               return row;
             });
-            setHeaders(wfHeaders);
-            setRows(wfRows);
+            setConvertedHeaders(wfHeaders);
+            setConvertedRows(wfRows);
             setStatus(tr('status.converted', { count: wfRows.length }), 'success');
             setWealthfolioCsv(csvText);
             setConvertedTransactions(selectedTransactions);
@@ -260,14 +277,14 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             }
           }
         } else {
-          const xlsxResult = await readXLSXFile(file);
+          const xlsxResult = await readXLSXFile(selectedFiles[0]);
           if (xlsxResult.error || xlsxResult.sheets.length === 0) {
             setValidation({ valid: 0, warning: 0, error: 1 });
             setStatus(tr('error.invalidXLSX'), 'error');
           } else {
             const first = xlsxResult.sheets[0];
-            setHeaders(first.rows[0] || []);
-            setRows(first.rows.slice(1));
+            setConvertedHeaders(first.rows[0] || []);
+            setConvertedRows(first.rows.slice(1));
             setStatus(tr('status.converted', { count: Math.max(0, (first.rows || []).length - 1) }), 'success');
           }
         }
@@ -282,13 +299,14 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
     }
   };
 
+
   const handleDownload = async () => {
-    if (rows.length === 0 && !wealthfolioCsv) {
+    if (convertedRows.length === 0 && !wealthfolioCsv) {
       setStatus(tr('error.emptyFile'), 'error');
       return;
     }
     try {
-      const csvContent = wealthfolioCsv || rows.map((row: any) => Object.values(row).map(v => String(v ?? '').includes(',') ? `"${String(v ?? '')}"` : String(v ?? '')).join(',')).join('\n');
+      const csvContent = wealthfolioCsv || convertedRows.map((row: any) => Object.values(row).map(v => String(v ?? '').includes(',') ? `"${String(v ?? '')}"` : String(v ?? '')).join(',')).join('\n');
       await files.openSaveDialog(csvContent, source + '_wealthfolio.csv');
     } catch (e) {
       setStatus(tr('export.error') + ': ' + (e instanceof Error ? e.message : String(e)), 'error');
@@ -443,20 +461,21 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
                 ref={fileInputRef}
                 type="file"
                 accept=".csv,.xlsx"
+                multiple
                 className="hidden"
                 onChange={(e) => {
-                  const selected = e.target.files?.[0];
-                  if (selected) handleFile(selected);
+                  const selected = Array.from(e.target.files || []);
+                  if (selected.length > 0) handleFile(selected);
                 }}
               />
-              {file && (
+              {selectedFiles.length > 0 && (
                 <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-                  {file.name}
+                  {selectedFiles.length === 1 ? selectedFiles[0].name : `${selectedFiles.length} files: ${selectedFiles.map(f => f.name).join(', ')}`}
                 </div>
               )}
             </div>
 
-            {file && (
+            {selectedFiles.length > 0 && (
               <Button onClick={handleConvert} disabled={isLoading || !selectedAccountId}>
                 {isLoading ? tr('export.loading') : tr('action.convert')}
               </Button>
@@ -464,42 +483,84 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
 
             {isLoading && <Skeleton className="h-6 w-32" />}
 
-            {!isLoading && rows.length === 0 && (
+            <div className="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2">
+              <div className="space-y-0.5">
+                <label className="text-sm font-medium">{tr('advanced.label')}</label>
+                <p className="text-xs text-muted-foreground">{tr('advanced.description')}</p>
+              </div>
+              <Switch checked={advanced} onCheckedChange={handleAdvancedChange} />
+            </div>
+
+            {!isLoading && convertedRows.length === 0 && rawRows.length === 0 && (
               <EmptyPlaceholder
                 title={tr('emptyState.title')}
                 description={tr('emptyState.description')}
               />
             )}
 
-            {rows.length > 0 && (
-              <div className="overflow-x-auto rounded-md border border-border max-h-[420px]">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      {headers.map((h, i) => (
-                        <TableHead key={i} className="whitespace-nowrap">{h}</TableHead>
-                      ))}
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rows.slice(0, 50).map((row, idx) => (
-                      <TableRow key={idx}>
-                        {headers.map((h, i) => (
-                          <TableCell key={i} className="max-w-xs truncate">{row[h] ?? ''}</TableCell>
+            {advanced && rawRows.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium">{tr('raw.title')}</h3>
+                <div className="overflow-auto rounded-md border border-border max-h-[420px]">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {rawHeaders.map((h, i) => (
+                          <TableHead key={i} className="whitespace-nowrap">{h}</TableHead>
                         ))}
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                {rows.length > 50 && (
-                  <div className="px-4 py-2 text-sm text-muted-foreground">
-                    {tr('preview.moreRows', { count: rows.length - 50 })}
-                  </div>
-                )}
+                    </TableHeader>
+                    <TableBody>
+                      {rawRows.slice(0, 100).map((row, idx) => (
+                        <TableRow key={idx}>
+                          {rawHeaders.map((h, i) => (
+                            <TableCell key={i} className="max-w-xs truncate">{row[h] ?? ''}</TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                  {rawRows.length > 100 && (
+                    <div className="px-4 py-2 text-sm text-muted-foreground">
+                      {tr('preview.moreRows', { count: rawRows.length - 100 })}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
-            {rows.length > 0 && (
+            {convertedRows.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-medium">{tr('converted.title')}</h3>
+                <div className="overflow-auto rounded-md border border-border max-h-[420px]">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {convertedHeaders.map((h, i) => (
+                          <TableHead key={i} className="whitespace-nowrap">{h}</TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {convertedRows.slice(0, 100).map((row, idx) => (
+                        <TableRow key={idx}>
+                          {convertedHeaders.map((h, i) => (
+                            <TableCell key={i} className="max-w-xs truncate">{row[h] ?? ''}</TableCell>
+                          ))}
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                  {convertedRows.length > 100 && (
+                    <div className="px-4 py-2 text-sm text-muted-foreground">
+                      {tr('preview.moreRows', { count: convertedRows.length - 100 })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {convertedRows.length > 0 && (
               <div className="flex flex-wrap items-center gap-3">
                 <Button onClick={handleDownload}>
                   {tr('export.download')}
@@ -516,6 +577,29 @@ export function ConverterPage({ t, files, storage, accounts, activities, navigat
             {statusMessage && (
               <div className={`rounded-md border px-3 py-2 text-sm ${statusClass}`}>
                 {statusMessage}
+              </div>
+            )}
+
+            {tickerResolution && (
+              <div className={`rounded-md border px-3 py-2 text-sm ${tickerResolution.unresolved.length > 0 || tickerResolution.error ? 'border-yellow-500/40 bg-yellow-500/10 text-yellow-800 dark:text-yellow-300' : 'border-border bg-muted/40 text-muted-foreground'}`}>
+                <p className="font-medium">{tr('tickerResolution.title')}</p>
+                <p>{tr('tickerResolution.summary', {
+                  checked: tickerResolution.checked,
+                  changed: tickerResolution.changes.length,
+                  unresolved: tickerResolution.unresolved.length,
+                })}</p>
+                {tickerResolution.changes.length > 0 && (
+                  <ul className="mt-1 list-disc pl-5">
+                    {tickerResolution.changes.map((change) => (
+                      <li key={`${change.from}-${change.to}`}>{tr('tickerResolution.change', change)}</li>
+                    ))}
+                  </ul>
+                )}
+                {tickerResolution.unresolved.length > 0 && (
+                  <p className="mt-1">{tr('tickerResolution.unresolved', { tickers: tickerResolution.unresolved.join(', ') })}</p>
+                )}
+                {tickerResolution.error && <p className="mt-1">{tickerResolution.error}</p>}
+                <p className="mt-1 text-xs">{tr('tickerResolution.privacy')}</p>
               </div>
             )}
 

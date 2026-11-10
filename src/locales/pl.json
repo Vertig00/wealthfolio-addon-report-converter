@@ -70,5 +70,16 @@
   "action.convert": "Konwertuj",
   "search.placeholder": "Szukaj...",
   "source.empty": "Nie znaleziono źródeł",
-  "status.converted": "Skonwertowano {count} rekordów"
+  "status.converted": "Skonwertowano {count} rekordów",
+  "advanced.label": "Zaawansowane",
+  "advanced.description": "Pokaż surowe dane źródłowe przed konwersją.",
+  "raw.title": "Dane surowe",
+  "converted.title": "Dane skonwertowane",
+  "tickerResolution.title": "Rozpoznawanie tickerów",
+  "tickerResolution.summary": "Wyszukiwanie rynkowe sprawdziło {checked} tickerów: {changed} zaktualizowanych, {unresolved} nierozpoznanych.",
+  "tickerResolution.change": "{from} → {to}",
+  "tickerResolution.unresolved": "Nie udało się rozpoznać automatycznie: {tickers}",
+  "tickerResolution.searchFailed": "Wyszukiwanie rynkowe nie powiodło się dla {count} tickerów; zachowano tickery z raportu.",
+  "tickerResolution.error": "Błąd wyszukiwania tickerów: {message}",
+  "tickerResolution.privacy": "Do wyszukiwania rynkowego Wealthfolio wysyłane są tylko tickery i nazwy instrumentów. Dane raportu pozostają lokalnie."
 }
