@@ -829,7 +829,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                             })()}
                           </TableCell>
                           <TableCell>
-                            <Button variant="ghost" size="sm" onClick={() => removeTransaction(globalIdx)}>
+                            <Button variant="destructive" size="sm" onClick={() => removeTransaction(globalIdx)}>
                               {tr('review.remove')}
                             </Button>
                           </TableCell>
@@ -912,6 +912,16 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                   changed: tickerResolution.changes.length,
                   unresolved: tickerResolution.unresolved.length,
                 })}</p>
+                {tickerResolution.aliases.length > 0 && (
+                  <>
+                    <p className="mt-1 font-medium">Built-in symbol aliases:</p>
+                    <ul className="mt-1 list-disc pl-5">
+                      {tickerResolution.aliases.map((change) => (
+                        <li key={`${change.from}-${change.to}`}>{tr('tickerResolution.change', change)}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
                 {tickerResolution.changes.length > 0 && (
                   <ul className="mt-1 list-disc pl-5">
                     {tickerResolution.changes.map((change) => (
