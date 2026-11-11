@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { readXLSXFile, readCSVFile } from '../lib/file-readers';
-import { buildWealthfolioCsv, toActivityImport } from '../lib/sources/xtb';
+import { buildWealthfolioCsv, toActivityImport, getWealthfolioSymbol } from '../lib/sources/xtb';
 import { deduplicateUpdateTransactions } from '../lib/sources/xtb/dedup';
 import { convertXTBFiles } from '../lib/sources/xtb/report-converter';
 import type { TickerResolutionView } from '../lib/sources/xtb/report-converter';
@@ -77,12 +77,16 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   const [rawPage, setRawPage] = useState(0);
   const [selectedRows, setSelectedRows] = useState<Set<number>>(new Set());
   const [originalTransactions, setOriginalTransactions] = useState<any[] | null>(null);
+  const [initialTransactions, setInitialTransactions] = useState<any[] | null>(null);
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [confirmUnderstood, setConfirmUnderstood] = useState(false);
+  const [sortColumn, setSortColumn] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [diffIndex, setDiffIndex] = useState<number | null>(null);
+  const [importProgress, setImportProgress] = useState(0);
   const [history, setHistory] = useState<any[][]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
-  const [hasDraft, setHasDraft] = useState(false);
   const [exportSeparator, setExportSeparator] = useState(',');
   const [exportFilename, setExportFilename] = useState('XTB_wealthfolio.csv');
   const [rawSearch, setRawSearch] = useState('');
@@ -133,18 +137,6 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   }, [convertedRows]);
 
   useEffect(() => {
-    if (!storage) return;
-    storage.get('draft.transactions').then((raw: string | null) => {
-      if (raw) setHasDraft(true);
-    }).catch(() => undefined);
-  }, [storage]);
-
-  useEffect(() => {
-    if (!storage || convertedTransactions.length === 0) return;
-    storage.set('draft.transactions', JSON.stringify(convertedTransactions)).catch(() => undefined);
-  }, [convertedTransactions, storage]);
-
-  useEffect(() => {
     if (!accounts) return;
     accounts.getAll().then((result: any[]) => {
       setAccountList(result || []);
@@ -168,7 +160,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
 
   const rebuildConverted = (txs: any[], pushHistory: boolean = true) => {
     const csvText = buildWealthfolioCsv(txs, exportSeparator);
-    const lines = csvText.split(/\\r?\\n/).filter((line: string) => line.trim().length > 0);
+    const lines = csvText.split(/\r?\n/).filter((line: string) => line.trim().length > 0);
     const wfHeaders = lines.length > 0 ? lines[0].split(exportSeparator) : [];
     const wfRows = lines.slice(1).map((line: string) => {
       const values = line.split(exportSeparator);
@@ -208,6 +200,17 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
 
   const removeTransaction = (index: number) => {
     const next = convertedTransactions.filter((_, i) => i !== index);
+    if (originalTransactions) {
+      setOriginalTransactions(originalTransactions.filter((_, i) => i !== index));
+    }
+    rebuildConverted(next);
+  };
+
+  const removeSelected = () => {
+    const next = convertedTransactions.filter((_, i) => !selectedRows.has(i));
+    if (originalTransactions) {
+      setOriginalTransactions(originalTransactions.filter((_, i) => !selectedRows.has(i)));
+    }
     rebuildConverted(next);
   };
 
@@ -231,27 +234,29 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
     });
   };
 
-  const removeSelected = () => {
-    const next = convertedTransactions.filter((_, i) => !selectedRows.has(i));
+  const resetEdits = () => {
+    if (initialTransactions) {
+      rebuildConverted(initialTransactions);
+      setOriginalTransactions(initialTransactions);
+    }
+  };
+
+  const revertTransaction = (index: number) => {
+    if (!originalTransactions?.[index]) return;
+    const next = convertedTransactions.map((tx, i) => (i === index ? originalTransactions[index] : tx));
     rebuildConverted(next);
   };
 
-  const resetEdits = () => {
-    if (originalTransactions) rebuildConverted(originalTransactions);
-  };
-
-  const restoreDraft = async () => {
-    if (!storage) return;
-    try {
-      const raw = await storage.get('draft.transactions');
-      if (raw) {
-        const txs = JSON.parse(raw);
-        rebuildConverted(txs);
-        setStep(1);
-      }
-    } catch {
-      // ignore
-    }
+  const normNum = (v: any) => (v === undefined || v === null || v === '' || isNaN(Number(v))) ? undefined : Number(v);
+  const isRowChanged = (idx: number) => {
+    const original = originalTransactions?.[idx];
+    if (!original) return false;
+    const tx = convertedTransactions[idx];
+    if (normNum(tx?.quantity) !== normNum(original?.quantity)) return true;
+    if (normNum(tx?.price) !== normNum(original?.price)) return true;
+    if (normNum(tx?.amount) !== normNum(original?.amount)) return true;
+    if (String(getWealthfolioSymbol(tx) ?? '').trim() !== String(getWealthfolioSymbol(original) ?? '').trim()) return true;
+    return false;
   };
 
   const startOver = () => {
@@ -266,11 +271,16 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
     setConvertedSearch('');
     setSelectedRows(new Set());
     setOriginalTransactions(null);
+    setInitialTransactions(null);
     setHistory([]);
     setHistoryIndex(-1);
     setTypeFilter('all');
     setStatusFilter('all');
     setConfirmUnderstood(false);
+    setSortColumn(null);
+    setSortDirection('asc');
+    setDiffIndex(null);
+    setImportProgress(0);
     resetResults();
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
@@ -402,6 +412,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
             setWealthfolioCsv(csvText);
             setConvertedTransactions(selectedTransactions);
             setOriginalTransactions(selectedTransactions);
+            setInitialTransactions(selectedTransactions);
             setHistory([selectedTransactions]);
             setHistoryIndex(0);
             if (mode === 'update') {
@@ -456,6 +467,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   const performImport = async () => {
     setIsConfirmOpen(false);
     setIsImporting(true);
+    setImportProgress(0);
     setImportSummary('');
     try {
       if (mode === 'initial') {
@@ -466,7 +478,9 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
         }
       }
       const imports = convertedTransactions.map((tx: any) => toActivityImport(tx, selectedAccountId));
+      setImportProgress(30);
       const checked = await activities.checkImport(imports);
+      setImportProgress(60);
       const invalid = (checked || []).filter((a: any) => a.isValid === false);
       if (invalid.length > 0) {
         const firstError = invalid[0]?.errors ? JSON.stringify(invalid[0].errors) : 'unknown';
@@ -479,6 +493,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
       if (firstActivityError) {
         setStatus(tr('import.returnedErrors', { error: JSON.stringify(firstActivityError.errors) }), 'error');
       }
+      setImportProgress(100);
       setImportSummary(summary ? tr('import.summary', { imported: summary.imported, skipped: summary.skipped, duplicates: summary.duplicates }) : tr('import.completed'));
       setStep(2);
       if (storage) {
@@ -510,7 +525,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   const rawFilteredCount = rawRows.filter((row) => !rawSearch || Object.values(row).some((v) => String(v ?? '').toLowerCase().includes(rawSearch.toLowerCase()))).length;
   const convertedEntries = convertedRows
     .map((row, idx) => ({ row, tx: convertedTransactions[idx], idx }))
-    .filter(({ row, tx }) => {
+    .filter(({ row, tx, idx }) => {
       if (convertedSearch && !Object.values(row).some((v) => String(v ?? '').toLowerCase().includes(convertedSearch.toLowerCase()))) return false;
       if (typeFilter !== 'all' && String(tx?.operationType) !== typeFilter) return false;
       if (statusFilter !== 'all') {
@@ -518,8 +533,19 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
         const ok = op === 'BUY' || op === 'SELL' ? (Number(tx?.quantity) > 0 && Number(tx?.price) > 0) : true;
         if (statusFilter === 'ok' && !ok) return false;
         if (statusFilter === 'warning' && ok) return false;
+        if (statusFilter === 'edited') {
+          if (!isRowChanged(idx)) return false;
+        }
       }
       return true;
+    })
+    .sort((a, b) => {
+      if (!sortColumn) return 0;
+      const va = a.row[sortColumn] ?? a.tx?.[sortColumn] ?? '';
+      const vb = b.row[sortColumn] ?? b.tx?.[sortColumn] ?? '';
+      const na = Number(va), nb = Number(vb);
+      if (!isNaN(na) && !isNaN(nb)) return sortDirection === 'asc' ? na - nb : nb - na;
+      return sortDirection === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
     });
   const convertedFilteredCount = convertedEntries.length;
 
@@ -579,9 +605,9 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
           <CardContent className="space-y-6">
             {step === 0 && (
               <>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">{tr('account.label')}</label>
+            <div className="flex flex-col gap-3 w-fit max-w-full">
+              <div className="flex items-center gap-4">
+                <label className="w-[150px] shrink-0 text-right text-sm font-medium">{tr('account.label')}</label>
                 <SearchableIconSelect
                   options={accountList.map((account: any) => ({
                     value: account.id,
@@ -593,11 +619,11 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                   placeholder={tr('account.placeholder')}
                   searchPlaceholder={tr('search.placeholder')}
                   emptyMessage={tr('account.none')}
+                  className="h-10 w-64"
                 />
               </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">{tr('source.select')}</label>
+              <div className="flex items-center gap-4">
+                <label className="w-[150px] shrink-0 text-right text-sm font-medium">{tr('source.select')}</label>
                 <SearchableIconSelect
                   options={[
                     { value: 'XTB', label: tr('source.XTB'), icon: <TrendingUp className="h-4 w-4" /> },
@@ -608,13 +634,13 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                   placeholder={tr('source.select')}
                   searchPlaceholder={tr('search.placeholder')}
                   emptyMessage={tr('source.empty')}
+                  className="h-10 w-64"
                 />
               </div>
-
-              <div className="space-y-2">
-                <label className="text-sm font-medium">{tr('import.mode')}</label>
+              <div className="flex items-center gap-4">
+                <label className="w-[150px] shrink-0 text-right text-sm font-medium">{tr('import.mode')}</label>
                 <Select value={mode} onValueChange={(v) => setMode(v as 'initial' | 'update')}>
-                  <SelectTrigger>
+                  <SelectTrigger className="w-64 h-10">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -663,12 +689,6 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
             {selectedFiles.length > 0 && (
               <Button onClick={handleConvert} disabled={isLoading || !selectedAccountId}>
                 {isLoading ? tr('export.loading') : tr('action.convert')}
-              </Button>
-            )}
-
-            {hasDraft && (
-              <Button variant="outline" onClick={restoreDraft}>
-                Restore draft
               </Button>
             )}
 
@@ -771,16 +791,21 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                     </Button>
                   </div>
                 </div>
-                <Input
-                  placeholder={tr('search.placeholder')}
-                  value={convertedSearch}
-                  onChange={(e) => { setConvertedSearch(e.target.value); setPage(0); }}
-                />
-                <div className="flex flex-wrap items-center gap-2">
-                  <Select value={typeFilter} onValueChange={(v) => { setTypeFilter(v); setPage(0); }}>
-                    <SelectTrigger className="w-[160px]">
-                      <SelectValue />
-                    </SelectTrigger>
+                <div className="space-y-1">
+                  <label className="text-sm font-medium">Search</label>
+                  <Input
+                    placeholder={tr('search.placeholder')}
+                    value={convertedSearch}
+                    onChange={(e) => { setConvertedSearch(e.target.value); setPage(0); }}
+                  />
+                </div>
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">Type filter</label>
+                    <Select value={typeFilter} onValueChange={(v) => { setTypeFilter(v); setPage(0); }}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All types</SelectItem>
                       {[...new Set(convertedTransactions.map((t: any) => t.operationType))].map((t: string) => (
@@ -788,16 +813,21 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                       ))}
                     </SelectContent>
                   </Select>
-                  <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(0); }}>
-                    <SelectTrigger className="w-[160px]">
-                      <SelectValue />
-                    </SelectTrigger>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium">Status filter</label>
+                    <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v); setPage(0); }}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All statuses</SelectItem>
                       <SelectItem value="ok">OK</SelectItem>
                       <SelectItem value="warning">Warning</SelectItem>
+                      <SelectItem value="edited">Edited</SelectItem>
                     </SelectContent>
                   </Select>
+                  </div>
                 </div>
 
                 {(() => {
@@ -840,7 +870,12 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                         </TableHead>
                         <TableHead className="whitespace-nowrap">#</TableHead>
                         {convertedHeaders.map((h, i) => (
-                          <TableHead key={i} className="whitespace-nowrap">{h}</TableHead>
+                          <TableHead key={i} className="whitespace-nowrap cursor-pointer select-none" onClick={() => {
+                            if (sortColumn === h) setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+                            else { setSortColumn(h); setSortDirection('asc'); }
+                          }}>
+                            {h} {sortColumn === h ? (sortDirection === 'asc' ? '▲' : '▼') : ''}
+                          </TableHead>
                         ))}
                         <TableHead className="whitespace-nowrap">Status</TableHead>
                         <TableHead className="whitespace-nowrap">{tr('review.remove')}</TableHead>
@@ -851,7 +886,12 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                         const globalIdx = entry.idx;
                         const row = entry.row;
                         return (
-                        <TableRow key={globalIdx}>
+                        <TableRow key={globalIdx} className={(() => {
+                          const tx = convertedTransactions[globalIdx];
+                          const op = tx?.operationType;
+                          const ok = op === 'BUY' || op === 'SELL' ? (Number(tx?.quantity) > 0 && Number(tx?.price) > 0) : true;
+                          return ok ? '' : 'bg-yellow-500/10';
+                        })()}>
                           <TableCell>
                             <input
                               type="checkbox"
@@ -867,7 +907,21 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                                 <TableCell key={i}>
                                   <Input
                                     type="number"
-                                    className="h-8 w-24"
+                                    className={`h-8 w-24 ${(() => {
+                                      const tx = convertedTransactions[globalIdx];
+                                      const op = tx?.operationType;
+                                      const original = originalTransactions?.[globalIdx];
+                                      let changed = false;
+                                      if (original) {
+                                        if (field === 'quantity') changed = normNum(tx?.quantity) !== normNum(original?.quantity);
+                                        if (field === 'price') changed = normNum(tx?.price) !== normNum(original?.price);
+                                        if (field === 'amount') changed = normNum(tx?.amount) !== normNum(original?.amount);
+                                      }
+                                      if (field === 'quantity' && (op === 'BUY' || op === 'SELL') && !(Number(tx?.quantity) > 0)) return 'border-red-500';
+                                      if (field === 'price' && (op === 'BUY' || op === 'SELL') && !(Number(tx?.price) > 0)) return 'border-red-500';
+                                      if (changed) return 'bg-amber-100 dark:bg-amber-900/30';
+                                      return '';
+                                    })()}`}
                                     value={convertedTransactions[globalIdx]?.[field] ?? ''}
                                     onChange={(e) => {
                                       const val = e.target.value;
@@ -888,8 +942,9 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                               const op = tx?.operationType;
                               const ok = op === 'BUY' || op === 'SELL' ? (Number(tx?.quantity) > 0 && Number(tx?.price) > 0) : true;
                               const reconciled = !!tx?.metadata?.reconciledFromOpenPositions;
+                              const title = ok ? 'OK' : 'Missing quantity or price for trade row';
                               return (
-                                <span className={ok ? 'text-green-600' : 'text-yellow-600'}>
+                                <span className={ok ? 'text-green-600' : 'text-yellow-600'} title={title}>
                                   {ok ? '✓' : '⚠'} {reconciled ? '★' : ''}
                                 </span>
                               );
@@ -899,6 +954,19 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                             <Button variant="destructive" size="sm" onClick={() => removeTransaction(globalIdx)}>
                               {tr('review.remove')}
                             </Button>
+                            {originalTransactions && (() => {
+                              const changed = isRowChanged(globalIdx);
+                              return changed ? (
+                                <>
+                                  <Button variant="ghost" size="sm" onClick={() => setDiffIndex(globalIdx)}>
+                                    Diff
+                                  </Button>
+                                  <Button variant="ghost" size="sm" onClick={() => revertTransaction(globalIdx)}>
+                                    Revert
+                                  </Button>
+                                </>
+                              ) : null;
+                            })()}
                           </TableCell>
                         </TableRow>
                         );
@@ -931,6 +999,46 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
               </>
             )}
 
+            {diffIndex !== null && originalTransactions && (
+              <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+                <div className="flex items-center justify-between">
+                  <p className="font-medium">Diff for row {diffIndex + 1}</p>
+                  <Button variant="ghost" size="sm" onClick={() => setDiffIndex(null)}>Close</Button>
+                </div>
+                <div className="mt-2 space-y-1">
+                  {(() => {
+                    const original = originalTransactions[diffIndex];
+                    const current = convertedTransactions[diffIndex];
+                    const fields = ['operationType', 'quantity', 'price', 'amount', 'currency', 'ticker'];
+                    const symbolChanged = getWealthfolioSymbol(current) !== getWealthfolioSymbol(original);
+                    return (
+                      <>
+                        {fields.map((field) => {
+                          const oldVal = (original as any)?.[field];
+                          const newVal = (current as any)?.[field];
+                          const changed = String(oldVal ?? '') !== String(newVal ?? '');
+                          return (
+                            <div key={field} className={`flex gap-2 rounded px-2 py-1 ${changed ? 'bg-amber-100 dark:bg-amber-900/30' : ''}`}>
+                              <span className="w-24 font-medium">{field}:</span>
+                              <span className={changed ? 'text-red-600 line-through' : ''}>{String(oldVal ?? '—')}</span>
+                              <span>→</span>
+                              <span className={changed ? 'text-green-600 font-medium' : ''}>{String(newVal ?? '—')}</span>
+                            </div>
+                          );
+                        })}
+                        <div className={`flex gap-2 rounded px-2 py-1 ${symbolChanged ? 'bg-amber-100 dark:bg-amber-900/30' : ''}`}>
+                          <span className="w-24 font-medium">symbol:</span>
+                          <span className={symbolChanged ? 'text-red-600 line-through' : ''}>{getWealthfolioSymbol(original)}</span>
+                          <span>→</span>
+                          <span className={symbolChanged ? 'text-green-600 font-medium' : ''}>{getWealthfolioSymbol(current)}</span>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+
             {step === 1 && convertedRows.length > 0 && (
               <div className="flex flex-wrap items-center gap-3">
                 <Button onClick={() => setStep(2)}>{tr('wizard.step.export')}</Button>
@@ -939,11 +1047,15 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
 
             {step === 2 && convertedRows.length > 0 && (
               <>
-                <div className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
-                  <p className="font-medium">Import summary</p>
+                <div className="rounded-md border border-border bg-muted/30 px-4 py-3 text-sm space-y-1">
+                  <p className="font-medium text-base">Summary</p>
                   <p>Records: {convertedTransactions.length}</p>
-                  <p>Types: {[...new Set(convertedTransactions.map((t: any) => t.operationType))].join(', ')}</p>
+                  <p>By type: {Object.entries(convertedTransactions.reduce((acc: any, t: any) => { acc[t.operationType] = (acc[t.operationType] || 0) + 1; return acc; }, {})).map(([k, v]) => `${k}: ${v}`).join(', ')}</p>
                   <p>Currencies: {[...new Set(convertedTransactions.map((t: any) => t.currency))].join(', ')}</p>
+                  <p>Tickers changed: {tickerResolution?.changes.length ?? 0} (market) + {tickerResolution?.aliases.length ?? 0} (aliases)</p>
+                  <p>Unresolved tickers: {tickerResolution?.unresolved.length ?? 0}</p>
+                  <p>Promotional shares added: {convertedTransactions.filter((t: any) => t.metadata?.reconciledFromOpenPositions).length}</p>
+                  <p>Rows with warnings: {convertedTransactions.filter((t: any) => { const op = t.operationType; return (op === 'BUY' || op === 'SELL') && !(Number(t.quantity) > 0 && Number(t.price) > 0); }).length}</p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <Input value={exportFilename} onChange={(e) => setExportFilename(e.target.value)} className="w-48" />
@@ -975,6 +1087,11 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                 {validation.warning > 0 && <Badge variant="warning">{validation.warning} {tr('validation.warning')}</Badge>}
                 {validation.error > 0 && <Badge variant="destructive">{validation.error} {tr('validation.error')}</Badge>}
               </div>
+              {isImporting && (
+                <div className="h-2 w-full rounded bg-muted">
+                  <div className="h-2 rounded bg-primary" style={{ width: `${importProgress}%` }} />
+                </div>
+              )}
               </>
             )}
 
@@ -985,36 +1102,38 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
             )}
 
             {tickerResolution && (
-              <div className={`rounded-md border px-3 py-2 text-sm ${tickerResolution.unresolved.length > 0 || tickerResolution.error ? 'border-yellow-500/40 bg-yellow-500/10 text-yellow-800 dark:text-yellow-300' : 'border-border bg-muted/40 text-muted-foreground'}`}>
-                <p className="font-medium">{tr('tickerResolution.title')}</p>
-                <p>{tr('tickerResolution.summary', {
-                  checked: tickerResolution.checked,
-                  changed: tickerResolution.changes.length,
-                  unresolved: tickerResolution.unresolved.length,
-                })}</p>
-                {tickerResolution.aliases.length > 0 && (
-                  <>
-                    <p className="mt-1 font-medium">Built-in symbol aliases:</p>
-                    <ul className="mt-1 list-disc pl-5">
-                      {tickerResolution.aliases.map((change) => (
-                        <li key={`${change.from}-${change.to}`}>{tr('tickerResolution.change', change)}</li>
-                      ))}
-                    </ul>
-                  </>
-                )}
-                {tickerResolution.changes.length > 0 && (
-                  <ul className="mt-1 list-disc pl-5">
-                    {tickerResolution.changes.map((change) => (
-                      <li key={`${change.from}-${change.to}`}>{tr('tickerResolution.change', change)}</li>
-                    ))}
-                  </ul>
-                )}
-                {tickerResolution.unresolved.length > 0 && (
-                  <p className="mt-1">{tr('tickerResolution.unresolved', { tickers: tickerResolution.unresolved.join(', ') })}</p>
-                )}
-                {tickerResolution.error && <p className="mt-1">{tickerResolution.error}</p>}
-                <p className="mt-1 text-xs">{tr('tickerResolution.privacy')}</p>
-              </div>
+              <details className={`rounded-md border px-3 py-2 text-sm ${tickerResolution.unresolved.length > 0 || tickerResolution.error ? 'border-yellow-500/40 bg-yellow-500/10 text-yellow-800 dark:text-yellow-300' : 'border-border bg-muted/40 text-muted-foreground'}`}>
+                <summary className="cursor-pointer font-medium">
+                  {tr('tickerResolution.title')} — {tickerResolution.checked} checked, {tickerResolution.changes.length + tickerResolution.aliases.length} updated, {tickerResolution.unresolved.length} unresolved
+                </summary>
+                <div className="mt-2 space-y-2">
+                  {tickerResolution.aliases.length > 0 && (
+                    <div>
+                      <p className="font-medium">Built-in symbol aliases ({tickerResolution.aliases.length}):</p>
+                      <ul className="mt-1 list-disc pl-5">
+                        {tickerResolution.aliases.map((change) => (
+                          <li key={`${change.from}-${change.to}`}>{tr('tickerResolution.change', change)}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {tickerResolution.changes.length > 0 && (
+                    <div>
+                      <p className="font-medium">Market search updates ({tickerResolution.changes.length}):</p>
+                      <ul className="mt-1 list-disc pl-5">
+                        {tickerResolution.changes.map((change) => (
+                          <li key={`${change.from}-${change.to}`}>{tr('tickerResolution.change', change)}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {tickerResolution.unresolved.length > 0 && (
+                    <p>{tr('tickerResolution.unresolved', { tickers: tickerResolution.unresolved.join(', ') })}</p>
+                  )}
+                  {tickerResolution.error && <p>{tickerResolution.error}</p>}
+                  <p className="text-xs">{tr('tickerResolution.privacy')}</p>
+                </div>
+              </details>
             )}
 
             {importSummary && (
