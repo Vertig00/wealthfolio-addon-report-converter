@@ -90,5 +90,10 @@
   "review.reconciled": "Promotional share added: {symbol}",
   "review.noSpecial": "No special items detected.",
   "pagination.prev": "Prev",
-  "pagination.next": "Next"
+  "pagination.next": "Next",
+  "source.subtype": "Report subtype",
+  "source.mBank.emakler": "eMakler",
+  "tickerFix.title": "Fix unresolved ticker symbols",
+  "tickerFix.description": "Some broker symbols could not be resolved automatically. Enter the correct Wealthfolio ticker for each one before importing.",
+  "tickerFix.apply": "Apply and continue"
 }

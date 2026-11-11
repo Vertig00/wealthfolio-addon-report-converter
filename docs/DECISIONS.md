@@ -43,3 +43,10 @@
 - Consequence: Adds the `market-data` / `searchTicker` permission and can add network latency on conversion.
 - Privacy: only tickers and instrument names are queried; full statements and financial data stay local.
 - Fallback: the explicit alias map remains for known renames and for offline/search failures.
+
+## 2026-11-11 — mBank will be a source with an eMakler subtype
+
+- Decision: model mBank as a report source with a subtype selector; first and currently only subtype is `eMakler`.
+- Rationale: mBank has multiple systems/report styles; the subtype keeps future mBank formats from overloading one parser.
+- Consequence: UI must show the subtype selector only when `mBank` is selected; mBank remains disabled until the eMakler adapter and tests are complete.
+- Financial-history rows that duplicate trade cash effects (`WYC`) and internal reservations (`Blokada`/`Odblokowanie`) should not become separate Wealthfolio activities.

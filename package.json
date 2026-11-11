@@ -1,6 +1,6 @@
 {
   "name": "wealthfolio-addon-report-converter",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "A wealthfolio addon that convert broker reports to wealthfolio",
   "type": "module",
   "main": "dist/addon.js",

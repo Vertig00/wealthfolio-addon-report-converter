@@ -90,5 +90,10 @@
   "review.reconciled": "Dodano akcję promocyjną: {symbol}",
   "review.noSpecial": "Nie wykryto pozycji specjalnych.",
   "pagination.prev": "Poprzednia",
-  "pagination.next": "Następna"
+  "pagination.next": "Następna",
+  "source.subtype": "Podtyp raportu",
+  "source.mBank.emakler": "eMakler",
+  "tickerFix.title": "Popraw nierozwiązane symbole tickerów",
+  "tickerFix.description": "Niektóre symbole brokera nie zostały automatycznie rozwiązane. Wpisz właściwy ticker Wealthfolio dla każdego z nich przed importem.",
+  "tickerFix.apply": "Zastosuj i kontynuuj"
 }

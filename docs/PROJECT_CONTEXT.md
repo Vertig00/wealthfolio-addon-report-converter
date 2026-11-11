@@ -173,3 +173,64 @@ Gotówka:
 Wnioski:
 - Dopasowanie samych aktywności jest bardzo dobre; problemem są duplikaty z trybu update oraz obsługa walut dywidend/podatków.
 - Priorytet naprawy: wspólny klucz deduplikacji dla transferów i podatków; następnie FX dla dywidend/podatków; na końcu ręczne uzupełnienie brakującego nabycia SHELL lub zaakceptowanie braku pozycji.
+
+## mBank eMakler sample analysis (2026-11-11)
+
+Verified from local samples in `local-samples/mBank eMakler/` (not committed):
+
+- Files are CP1250, semicolon-delimited, with a metadata block before the table.
+- Dates use `DD.MM.YYYY HH:mm:ss`; decimals use comma; thousands use spaces.
+- `eMAKLER_historia_transakcji_YYYY.Csv` columns:
+  `Czas transakcji;Papier;Giełda;K/S;Liczba;Kurs;Waluta;Prowizja;Waluta;Wartość;Waluta`.
+- `eMAKLER_historia_finansowa_YYYY.Csv` columns:
+  `Data;Opis;Kwota`, with dividend rows containing an extra empty field before the amount.
+- Transaction side `K` = buy, `S` = sell.
+- Trade currency can be `USD` while total `Wartość` is `PLN`; implicit FX = `Wartość / (Liczba * Kurs)`.
+- Financial history contains dividends, IKZE deposits, savings-to-investment deposits, sell settlements (`WYC`),
+  and cash reservation/release rows (`Blokada`, `Odblokowanie`).
+- No `Zlecenia` or `Zapisy` sample is available in the provided directory.
+- Detailed format notes: `docs/sources/mbank-emakler-analysis.md`.
+
+## mBank eMakler adapter implementation (2026-11-11)
+
+Implemented:
+- `src/lib/sources/mbank/` parser and report converter for the `emakler` subtype.
+- CP1250 decoding and metadata/header-row detection.
+- Transaction report parsing into BUY/SELL with implicit FX rates.
+- Financial history parsing into DIVIDEND/DEPOSIT and skipping WYC/Blokada/Odblokowanie settlement rows.
+- Wealthfolio CSV generation through the shared builder, with fee support from transaction metadata.
+- UI source selector now enables mBank and shows an eMakler subtype selector.
+- Synthetic parser tests in `src/lib/sources/mbank/parser.test.ts` and fixtures in `tests/fixtures/mbank/`.
+- CSV reader helpers `readTextFile` and `findCsvHeaderIndex`.
+
+Verified:
+- `./node_modules/.bin/tsc --noEmit` passes.
+- `./node_modules/.bin/vitest run` passes (9 tests).
+- `./node_modules/.bin/vite build` passes.
+
+Known limitations:
+- Only `emakler` subtype is implemented; Zlecenia and Zapisy reports are not yet handled.
+- mBank instrument codes are not mapped to standard tickers; market resolution may be needed.
+- Dividend amounts are treated as paid amounts; gross/net tax status is not verified.
+- Node 18.19.1 is below Vite's recommended version; tests require a File polyfill in this environment.
+
+## mBank ticker mapping (2026-11-11)
+
+- Added `src/lib/sources/mbank/symbol-map.ts` with explicit aliases for mBank eMakler instrument codes.
+- Parser now stores `metadata.resolvedSymbol` using these aliases, so Wealthfolio CSV/import uses the mapped ticker.
+- Conversion now also invokes the host market ticker resolver for unresolved codes.
+- Known aliases include PKNORLEN->PKN.WA, ORANGEPL->OPL.WA, PGE->PGE.WA, PHOTON->PEN.WA, MBANK->MBK.WA, MODIVO->MDV.WA, CDPROJEKT->CDR.WA, CYFRPLSAT->CPS.WA, ASSECOPOL->ACP.WA, XTB->XTB.WA, BIOCELTIX->BCT.WA, RBOT LN ETF->RBOT.L, SPY5 LN ETF->SPY5.L.
+
+## mBank cash balance fix (2026-11-11)
+
+- mBank transaction rows are no longer deduplicated by generated ID within a file, because
+  identical rows can represent separate executions and mBank provides no source ID.
+- Fees for non-PLN trades are now folded into the trade amount/unit price instead of being
+  passed as a separate fee in the activity currency, avoiding FX conversion of PLN fees.
+- Expected net cash for the provided mBank samples remains 9.03 PLN.
+
+## mBank PLN value rounding fix (2026-11-11)
+
+- For PLN trades, the unit price is now derived from the report's `Wartość` when it differs
+  from `Liczba * Kurs`, so Wealthfolio's cash impact matches the report value.
+- This addresses the CYFRPLSAT row where `35 * 12.70` and the reported `Wartość` differ.
