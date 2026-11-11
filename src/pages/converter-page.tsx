@@ -3,6 +3,7 @@ import { readXLSXFile, readCSVFile } from '../lib/file-readers';
 import { buildWealthfolioCsv, toActivityImport, getWealthfolioSymbol } from '../lib/sources/xtb';
 import { deduplicateUpdateTransactions } from '../lib/sources/xtb/dedup';
 import { convertXTBFiles } from '../lib/sources/xtb/report-converter';
+import { convertMBankFiles } from '../lib/sources/mbank/report-converter';
 import type { TickerResolutionView } from '../lib/sources/xtb/report-converter';
 import { SearchableIconSelect } from '../components/searchable-icon-select';
 import { TrendingUp, Wallet, CreditCard, Bitcoin, Building2 } from 'lucide-react';
@@ -56,6 +57,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   const [selectedAccountId, setSelectedAccountId] = useState<string>('');
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [source, setSource] = useState<'XTB' | 'mBank'>('XTB');
+  const [mbankSubtype, setMBankSubtype] = useState<'emakler'>('emakler');
   const [mode, setMode] = useState<'initial' | 'update'>('initial');
   const [isDragging, setIsDragging] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -72,6 +74,8 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [statusType, setStatusType] = useState<'info' | 'success' | 'warning' | 'error'>('info');
   const [tickerResolution, setTickerResolution] = useState<TickerResolutionView | null>(null);
+  const [tickerFixOpen, setTickerFixOpen] = useState(false);
+  const [tickerFixes, setTickerFixes] = useState<Record<string, string>>({});
   const [step, setStep] = useState(0);
   const [page, setPage] = useState(0);
   const [rawPage, setRawPage] = useState(0);
@@ -89,6 +93,12 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [exportSeparator, setExportSeparator] = useState(',');
   const [exportFilename, setExportFilename] = useState('XTB_wealthfolio.csv');
+  useEffect(() => {
+    const suggested = source === 'mBank'
+      ? `mBank_${mbankSubtype}_wealthfolio.csv`
+      : `${source}_wealthfolio.csv`;
+    setExportFilename(suggested);
+  }, [source, mbankSubtype]);
   const [rawSearch, setRawSearch] = useState('');
   const [convertedSearch, setConvertedSearch] = useState('');
   const pageSize = 50;
@@ -361,8 +371,62 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
     setStatus('', 'info');
     setTickerResolution(null);
     setValidation({ valid: 0, warning: 0, error: 0 });
-    const name = selectedFiles[0].name.toLowerCase();
     try {
+      if (source === 'mBank') {
+        const conversion = await convertMBankFiles(selectedFiles, mbankSubtype, market, tr);
+        if (conversion.firstError && conversion.transactions.length === 0) {
+          setValidation({ valid: 0, warning: 0, error: 1 });
+          setStatus(conversion.firstError, 'error');
+          return;
+        }
+        const reportTransactions = conversion.transactions;
+        setTickerResolution(conversion.tickerResolution ?? null);
+
+        let selectedTransactions = reportTransactions;
+        if (mode === 'update' && activities && selectedAccountId) {
+          try {
+            const existing = await activities.getAll(selectedAccountId);
+            selectedTransactions = deduplicateUpdateTransactions(reportTransactions, existing || []);
+          } catch {
+            selectedTransactions = reportTransactions;
+          }
+        }
+
+        const csvText = buildWealthfolioCsv(selectedTransactions);
+        const lines = csvText.split(/\r?\n/).filter((line: string) => line.trim().length > 0);
+        const wfHeaders = lines.length > 0 ? lines[0].split(',') : [];
+        const wfRows = lines.slice(1).map((line: string) => {
+          const values = line.split(',');
+          const row: Record<string, string> = {};
+          wfHeaders.forEach((header: string, index: number) => {
+            row[header] = index < values.length ? values[index] : '';
+          });
+          return row;
+        });
+        setConvertedHeaders(wfHeaders);
+        setConvertedRows(wfRows);
+        if (conversion.warnings.length > 0) {
+          setStatus(conversion.warnings.join('; '), 'warning');
+        } else {
+          setStatus(tr('status.converted', { count: wfRows.length }), 'success');
+        }
+        setStep(1);
+        setWealthfolioCsv(csvText);
+        setConvertedTransactions(selectedTransactions);
+        setOriginalTransactions(selectedTransactions);
+        setInitialTransactions(selectedTransactions);
+        setHistory([selectedTransactions]);
+        setHistoryIndex(0);
+        if (mode === 'update') {
+          if (wfRows.length === 0) setStatus(tr('update.noNew'), 'warning');
+          else {
+            setStatus(tr('update.summary', { existing: reportTransactions.length - selectedTransactions.length, new: selectedTransactions.length }), 'success');
+          }
+        }
+        return;
+      }
+
+      const name = selectedFiles[0].name.toLowerCase();
       if (name.endsWith('.csv')) {
         const csvResult = await readCSVFile(selectedFiles[0]);
         if (csvResult.errors.length > 0) {
@@ -461,6 +525,45 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
 
   const handleImportClick = () => {
     if (!selectedAccountId || convertedTransactions.length === 0 || !activities) return;
+    const unresolved = tickerResolution?.unresolved ?? [];
+    if (unresolved.length > 0) {
+      const fixes: Record<string, string> = {};
+      for (const code of unresolved) {
+        const tx = convertedTransactions.find((t: any) => String(t.ticker || '').trim() === code);
+        fixes[code] = tx ? getWealthfolioSymbol(tx) : code;
+      }
+      setTickerFixes(fixes);
+      setTickerFixOpen(true);
+      return;
+    }
+    setIsConfirmOpen(true);
+  };
+
+  const applyTickerFixes = () => {
+    const updated = convertedTransactions.map((tx: any) => {
+      const code = String(tx.ticker || '').trim();
+      const fix = tickerFixes[code];
+      if (!fix || !fix.trim()) return tx;
+      return { ...tx, metadata: { ...(tx.metadata || {}), resolvedSymbol: fix.trim() } };
+    });
+    setConvertedTransactions(updated);
+    const csvText = buildWealthfolioCsv(updated);
+    const lines = csvText.split(/\r?\n/).filter((line: string) => line.trim().length > 0);
+    const wfHeaders = lines.length > 0 ? lines[0].split(',') : [];
+    const wfRows = lines.slice(1).map((line: string) => {
+      const values = line.split(',');
+      const row: Record<string, string> = {};
+      wfHeaders.forEach((header: string, index: number) => {
+        row[header] = index < values.length ? values[index] : '';
+      });
+      return row;
+    });
+    setConvertedHeaders(wfHeaders);
+    setConvertedRows(wfRows);
+    setWealthfolioCsv(csvText);
+    setOriginalTransactions(updated);
+    setTickerResolution((prev) => (prev ? { ...prev, unresolved: [] } : prev));
+    setTickerFixOpen(false);
     setIsConfirmOpen(true);
   };
 
@@ -627,7 +730,7 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                 <SearchableIconSelect
                   options={[
                     { value: 'XTB', label: tr('source.XTB'), icon: <TrendingUp className="h-4 w-4" /> },
-                    { value: 'mBank', label: tr('source.mBank'), icon: <Building2 className="h-4 w-4" />, disabled: true },
+                    { value: 'mBank', label: tr('source.mBank'), icon: <Building2 className="h-4 w-4" /> },
                   ]}
                   value={source}
                   onValueChange={(v) => setSource(v as 'XTB' | 'mBank')}
@@ -637,6 +740,19 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                   className="h-10 w-64"
                 />
               </div>
+              {source === 'mBank' && (
+                <div className="flex items-center gap-4">
+                  <label className="w-[150px] shrink-0 text-right text-sm font-medium">{tr('source.subtype')}</label>
+                  <Select value={mbankSubtype} onValueChange={(v) => setMBankSubtype(v as 'emakler')}>
+                    <SelectTrigger className="w-64 h-10">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="emakler">{tr('source.mBank.emakler')}</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               <div className="flex items-center gap-4">
                 <label className="w-[150px] shrink-0 text-right text-sm font-medium">{tr('import.mode')}</label>
                 <Select value={mode} onValueChange={(v) => setMode(v as 'initial' | 'update')}>
@@ -1141,6 +1257,31 @@ export function ConverterPage({ t, files, storage, accounts, activities, market,
                 {importSummary}
               </div>
             )}
+
+            <AlertDialog open={tickerFixOpen} onOpenChange={setTickerFixOpen}>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{tr('tickerFix.title')}</AlertDialogTitle>
+                  <AlertDialogDescription>{tr('tickerFix.description')}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <div className="space-y-3 py-2">
+                  {Object.keys(tickerFixes).map((code) => (
+                    <div key={code} className="flex items-center gap-3">
+                      <label className="w-40 text-sm font-medium">{code}</label>
+                      <Input
+                        value={tickerFixes[code]}
+                        onChange={(e) => setTickerFixes((prev) => ({ ...prev, [code]: e.target.value }))}
+                        className="flex-1"
+                      />
+                    </div>
+                  ))}
+                </div>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{tr('import.confirm.cancel')}</AlertDialogCancel>
+                  <AlertDialogAction onClick={applyTickerFixes}>{tr('tickerFix.apply')}</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
 
             <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
               <AlertDialogContent>

@@ -30,7 +30,7 @@ export function readCSV(content: string): { rows: any[]; headers: string[]; erro
   return { rows, headers, errors: [] };
 }
 
-export function readCSVFile(file: File): Promise<{ rows: any[]; headers: string[]; errors: string[] }> {
+export function readCSVFile(file: File, encoding: string = 'utf-8'): Promise<{ rows: any[]; headers: string[]; errors: string[] }> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -38,6 +38,22 @@ export function readCSVFile(file: File): Promise<{ rows: any[]; headers: string[
       resolve(result);
     };
     reader.onerror = () => reject(new Error('Failed to read file'));
-    reader.readAsText(file, 'utf8');
+    reader.readAsText(file, encoding);
   });
+}
+
+export function readTextFile(file: File, encoding: string = 'utf-8'): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => resolve(e.target?.result as string || '');
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsText(file, encoding);
+  });
+}
+
+export function findCsvHeaderIndex(lines: string[], matcher: (line: string) => boolean): number {
+  for (let i = 0; i < lines.length; i++) {
+    if (matcher(lines[i])) return i;
+  }
+  return -1;
 }

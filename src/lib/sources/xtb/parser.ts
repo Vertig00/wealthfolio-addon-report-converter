@@ -96,7 +96,7 @@ function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number 
   const act = toWealthfolioActivityType(tx.operationType, tx.amount);
   let uPrice = '';
   const curr = tx.currency;
-  const feeVal = String(fee);
+  let feeVal = String((tx.metadata as any)?.fee ?? fee);
   let amt = '';
   const fx = fxRate !== undefined ? String(fxRate) : '';
   const sub = String((tx.metadata as any)?.subtype || '');
@@ -104,7 +104,20 @@ function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number 
 
   if (tx.operationType === 'BUY' || tx.operationType === 'SELL') {
     qty = tx.quantity !== undefined ? String(tx.quantity) : '';
-    uPrice = tx.price !== undefined ? String(tx.price) : '';
+    const metaFee = Number((tx.metadata as any)?.fee ?? 0);
+    // Fees for non-PLN trades are stored in PLN but Wealthfolio converts the fee
+    // column using the activity FX rate. Fold such fees into the unit price so
+    // the cash impact stays correct while avoiding double FX conversion.
+    if (metaFee && tx.currency && tx.currency !== 'PLN') {
+      const fx = fxRate ?? tx.fxRate ?? 1;
+      const qtyNum = tx.quantity && tx.quantity > 0 ? tx.quantity : 1;
+      const feeInCurrency = metaFee / fx;
+      const sign = tx.operationType === 'SELL' ? -1 : 1;
+      uPrice = tx.price !== undefined ? String(tx.price + sign * feeInCurrency / qtyNum) : '';
+      feeVal = '0';
+    } else {
+      uPrice = tx.price !== undefined ? String(tx.price) : '';
+    }
   } else if (tx.operationType === 'INTEREST' || tx.operationType === 'DEPOSIT' || tx.operationType === 'WITHDRAWAL') {
     qty = '1';
     uPrice = '1';
@@ -142,9 +155,24 @@ export function toActivityImport(tx: TransactionRecord, accountId: string): Acti
     unitPrice: tx.price,
     subtype: (tx.metadata as any)?.subtype,
     currency: tx.currency,
-    fee: 0,
+    fee: (() => {
+      const metaFee = Number((tx.metadata as any)?.fee ?? 0);
+      if ((tx.operationType === 'BUY' || tx.operationType === 'SELL') && tx.currency && tx.currency !== 'PLN' && metaFee) {
+        return 0;
+      }
+      return (tx.metadata as any)?.fee ?? 0;
+    })(),
     tax: 0,
-    amount: tx.operationType === 'BUY' || tx.operationType === 'SELL' ? (tx.quantity || 0) * (tx.price || 0) : tx.amount,
+    amount: (() => {
+      const base = tx.operationType === 'BUY' || tx.operationType === 'SELL' ? (tx.quantity || 0) * (tx.price || 0) : (tx.amount ?? 0);
+      const metaFee = Number((tx.metadata as any)?.fee ?? 0);
+      if ((tx.operationType === 'BUY' || tx.operationType === 'SELL') && tx.currency && tx.currency !== 'PLN' && metaFee) {
+        const fx = tx.fxRate ?? 1;
+        const sign = tx.operationType === 'SELL' ? -1 : 1;
+        return base + sign * metaFee / fx;
+      }
+      return base;
+    })(),
     fxRate: tx.fxRate,
     quoteMode: 'MARKET',
     comment: tx.description,

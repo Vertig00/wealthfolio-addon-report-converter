@@ -134,3 +134,26 @@ Stage 1 mostly complete; Stage 2/3 partially complete; Stage 4 in progress.
 NIE robić: pełna przebudowa od zera, zastępowanie Cash Operations przez Open Positions, commitowanie realnych raportów.
   4. Po zgodzie użytkownika usunąć 94 duplikaty przez MCP i zweryfikować gotówkę.
   5. Zdecydować, co zrobić z brakującym holdingiem SHELL.
+
+## mBank eMakler analysis (2026-11-11)
+
+- Added `docs/sources/mbank-emakler-analysis.md`.
+- Updated persistent context with verified mBank file properties and row mappings.
+- Next recommended steps:
+  1. Obtain anonymized/synthetic `Zlecenia` and `Zapisy` samples.
+  2. Add CP1250-aware decoding and header-row detection to the CSV reader layer.
+  3. Implement `src/lib/sources/mbank/` with an `emakler` subtype.
+  4. Add source-subtype selection to the UI and enable mBank after parser tests pass.
+  5. Add synthetic fixtures/tests before direct import support.
+
+## mBank eMakler adapter implementation (2026-11-11)
+
+Completed:
+- Implemented mBank eMakler parsing, conversion, UI subtype selection, tests, and fixtures.
+- Quality checks pass: tsc, vitest, vite build.
+
+Remaining work:
+1. Add Zlecenia and Zapisy support once samples are available.
+2. Improve ticker mapping/resolution for mBank instrument codes.
+3. Validate dividend tax semantics and PLN fees on USD trades.
+4. Consider direct import support for mBank after parser validation.
