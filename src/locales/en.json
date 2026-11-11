@@ -81,5 +81,14 @@
   "tickerResolution.unresolved": "Could not resolve automatically: {tickers}",
   "tickerResolution.searchFailed": "Market search failed for {count} ticker symbols; report tickers were kept.",
   "tickerResolution.error": "Ticker search error: {message}",
-  "tickerResolution.privacy": "Only ticker symbols and instrument names are sent to Wealthfolio market search. Statement data stays local."
+  "tickerResolution.privacy": "Only ticker symbols and instrument names are sent to Wealthfolio market search. Statement data stays local.",
+  "wizard.step.setup": "1. Setup",
+  "wizard.step.review": "2. Review",
+  "wizard.step.export": "3. Export",
+  "review.remove": "Remove",
+  "review.special.title": "Special items",
+  "review.reconciled": "Promotional share added: {symbol}",
+  "review.noSpecial": "No special items detected.",
+  "pagination.prev": "Prev",
+  "pagination.next": "Next"
 }

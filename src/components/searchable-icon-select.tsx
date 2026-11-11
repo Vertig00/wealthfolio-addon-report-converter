@@ -27,6 +27,7 @@ export function SearchableIconSelect({
   placeholder,
   searchPlaceholder,
   emptyMessage,
+  className,
 }: {
   options: SearchableIconOption[];
   value: string;
@@ -34,6 +35,7 @@ export function SearchableIconSelect({
   placeholder?: string;
   searchPlaceholder?: string;
   emptyMessage?: string;
+  className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const selected = options.find((option) => option.value === value);
@@ -41,7 +43,7 @@ export function SearchableIconSelect({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button type="button" variant="outline" role="combobox" aria-expanded={open} className="w-full justify-between">
+        <Button type="button" variant="outline" role="combobox" aria-expanded={open} className={`justify-between ${className ?? ''}`}>
           <span className="flex items-center gap-2 truncate">
             {selected?.icon}
             {selected ? selected.label : placeholder}

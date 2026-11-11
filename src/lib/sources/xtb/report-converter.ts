@@ -6,6 +6,7 @@ import type { TickerLookupInput } from '../../market/ticker-resolver';
 export interface TickerResolutionView {
   checked: number;
   changes: Array<{ from: string; to: string }>;
+  aliases: Array<{ from: string; to: string }>;
   unresolved: string[];
   error?: string;
 }
@@ -41,7 +42,21 @@ export async function convertXTBFiles(
   }
 
   let reportTransactions = mergedTransactions;
-  let tickerResolution: TickerResolutionView | null = null;
+
+  const aliasChanges: Array<{ from: string; to: string }> = [];
+  const seenAlias = new Set<string>();
+  for (const tx of mergedTransactions) {
+    const ticker = String(tx.ticker || '').trim();
+    if (!ticker || seenAlias.has(ticker)) continue;
+    seenAlias.add(ticker);
+    const mapped = mapXTBSymbol(ticker);
+    if (mapped !== ticker) aliasChanges.push({ from: ticker, to: mapped });
+  }
+
+  let tickerResolution: TickerResolutionView | null =
+    aliasChanges.length > 0
+      ? { checked: 0, changes: [], aliases: aliasChanges, unresolved: [], error: undefined }
+      : null;
 
   if (market?.searchTicker && mergedTransactions.length > 0) {
     const inputsByTicker = new Map<string, TickerLookupInput>();
@@ -67,6 +82,7 @@ export async function convertXTBFiles(
         tickerResolution = {
           checked: resolution.checked,
           changes: resolution.changes.map((item) => ({ from: item.requestedTicker, to: item.symbol })),
+          aliases: aliasChanges,
           unresolved: [...resolution.ambiguous, ...resolution.notFound, ...resolution.failed].map((item) => item.requestedTicker),
           error: resolution.failed.length > 0 ? tr('tickerResolution.searchFailed', { count: resolution.failed.length }) : undefined,
         };
@@ -74,6 +90,7 @@ export async function convertXTBFiles(
         tickerResolution = {
           checked: inputsByTicker.size,
           changes: [],
+          aliases: aliasChanges,
           unresolved: [],
           error: tr('tickerResolution.error', { message: error instanceof Error ? error.message : String(error) }),
         };

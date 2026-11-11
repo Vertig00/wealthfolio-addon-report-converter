@@ -87,7 +87,7 @@ function instrumentTypeFor(tx: TransactionRecord, category: string): string {
   return isCashTransaction(tx) ? '' : (category === 'ETF' ? 'ETF' : 'EQUITY');
 }
 
-function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number | undefined): string {
+function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number | undefined, separator: string = ','): string {
   const dateStr = tx.date.toISOString().replace('Z', '').replace(/\.\d+$/, '');
   const symbol = getWealthfolioSymbol(tx);
   const category = String((tx.metadata as any)?.category || '').trim().toUpperCase();
@@ -117,13 +117,14 @@ function buildWealthfolioRow(tx: TransactionRecord, fee: number, fxRate: number 
     amt = tx.amount !== undefined ? String(tx.amount) : '';
   }
 
-  return [dateStr, symbol, instrumentType, qty, act, uPrice, curr, feeVal, '0', amt, fx, sub, comm].join(',');
+  return [dateStr, symbol, instrumentType, qty, act, uPrice, curr, feeVal, '0', amt, fx, sub, comm].join(separator);
 }
 
-export function buildWealthfolioCsv(transactions: TransactionRecord[]): string {
-  const rows: string[] = ['date,symbol,instrumentType,quantity,activityType,unitPrice,currency,fee,tax,amount,fxRate,subtype,comment'];
+export function buildWealthfolioCsv(transactions: TransactionRecord[], separator: string = ','): string {
+  const header = ['date', 'symbol', 'instrumentType', 'quantity', 'activityType', 'unitPrice', 'currency', 'fee', 'tax', 'amount', 'fxRate', 'subtype', 'comment'].join(separator);
+  const rows: string[] = [header];
   for (const tx of transactions) {
-    rows.push(buildWealthfolioRow(tx, 0, tx.fxRate));
+    rows.push(buildWealthfolioRow(tx, 0, tx.fxRate, separator));
   }
   return rows.join('\n');
 }

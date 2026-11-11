@@ -81,5 +81,14 @@
   "tickerResolution.unresolved": "Nie udało się rozpoznać automatycznie: {tickers}",
   "tickerResolution.searchFailed": "Wyszukiwanie rynkowe nie powiodło się dla {count} tickerów; zachowano tickery z raportu.",
   "tickerResolution.error": "Błąd wyszukiwania tickerów: {message}",
-  "tickerResolution.privacy": "Do wyszukiwania rynkowego Wealthfolio wysyłane są tylko tickery i nazwy instrumentów. Dane raportu pozostają lokalnie."
+  "tickerResolution.privacy": "Do wyszukiwania rynkowego Wealthfolio wysyłane są tylko tickery i nazwy instrumentów. Dane raportu pozostają lokalnie.",
+  "wizard.step.setup": "1. Konfiguracja",
+  "wizard.step.review": "2. Przegląd",
+  "wizard.step.export": "3. Eksport",
+  "review.remove": "Usuń",
+  "review.special.title": "Pozycje specjalne",
+  "review.reconciled": "Dodano akcję promocyjną: {symbol}",
+  "review.noSpecial": "Nie wykryto pozycji specjalnych.",
+  "pagination.prev": "Poprzednia",
+  "pagination.next": "Następna"
 }
